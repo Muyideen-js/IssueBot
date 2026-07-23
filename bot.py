@@ -46,6 +46,8 @@ HEADLESS               = os.getenv("HEADLESS", "true").lower() == "true"
 SESSION_DIR            = Path("sessions")
 STATE_FILE             = Path("state.json")
 LOG_FILE               = "bot.log"
+DASHBOARD_URL          = os.getenv("DASHBOARD_URL", "")   # your Render URL
+SYNC_SECRET            = os.getenv("SYNC_SECRET", "sync-secret-123")
 
 # ─── LOGGING (UTF-8 safe on Windows) ──────────────────────────────────────────
 def _safe(msg: str) -> str:
@@ -92,6 +94,25 @@ def load_state() -> dict:
 
 def save_state(s: dict):
     STATE_FILE.write_text(json.dumps(s, indent=2))
+
+# ─── DASHBOARD SYNC ────────────────────────────────────────────────────────────
+def sync_dashboard(state: dict):
+    """Push latest state + logs to the hosted dashboard."""
+    if not DASHBOARD_URL:
+        return
+    try:
+        logs = []
+        if Path(LOG_FILE).exists():
+            logs = Path(LOG_FILE).read_text(encoding="utf-8", errors="replace").splitlines()[-100:]
+        requests.post(
+            f"{DASHBOARD_URL.rstrip('/')}/sync",
+            headers={"X-Sync-Secret": SYNC_SECRET},
+            json={"state": state, "logs": logs},
+            timeout=10
+        )
+        log.info("Dashboard synced")
+    except Exception as e:
+        log.warning(f"Dashboard sync failed: {e}")
 
 # ─── BROWSER SETUP ─────────────────────────────────────────────────────────────
 def make_context(pw, platform: str) -> BrowserContext:
@@ -733,6 +754,7 @@ def run_cycle(state: dict, platforms: list[str]):
 
     s = state["stats"]
     log.info(f"Stats | Applied:{s['applied']} Accepted:{s['accepted']} Timed-out:{s['timed_out']}")
+    sync_dashboard(state)
     log.info("=== Cycle end ===")
 
 

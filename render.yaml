@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: issuebot-dashboard
+    env: python
+    buildCommand: pip install flask gunicorn requests
+    startCommand: gunicorn dashboard:app --bind 0.0.0.0:$PORT
+    envVars:
+      - key: DASHBOARD_PASSWORD
+        sync: false
+      - key: DASHBOARD_SECRET_KEY
+        sync: false
+      - key: SYNC_SECRET
+        sync: false
+      - key: ACCEPTANCE_TIMEOUT_HOURS
+        value: "24"

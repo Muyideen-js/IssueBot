@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Issue Bot Dashboard</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Segoe UI', sans-serif;
+    background: #0d1117;
+    color: #e6edf3;
+    min-height: 100vh;
+  }
+
+  /* ── NAV ── */
+  nav {
+    background: #161b22;
+    border-bottom: 1px solid #30363d;
+    padding: 0 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 56px;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+  .nav-left { display: flex; align-items: center; gap: 10px; }
+  .nav-logo { font-size: 1.3rem; }
+  .nav-title { font-weight: 700; font-size: 1rem; }
+  .nav-sub { color: #8b949e; font-size: 0.8rem; }
+  .status-pill {
+    display: flex; align-items: center; gap: 6px;
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    background: #1a2f1a;
+    border: 1px solid #238636;
+    color: #3fb950;
+  }
+  .status-dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: #3fb950;
+    animation: pulse 2s infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+  .logout {
+    color: #8b949e; font-size: 0.82rem;
+    text-decoration: none;
+    padding: 6px 12px;
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    transition: all 0.2s;
+  }
+  .logout:hover { color: #e6edf3; border-color: #8b949e; }
+
+  /* ── LAYOUT ── */
+  .container { max-width: 1100px; margin: 0 auto; padding: 24px 20px; }
+
+  /* ── STAT CARDS ── */
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 16px;
+    margin-bottom: 28px;
+  }
+  .stat-card {
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 10px;
+    padding: 20px;
+    text-align: center;
+    transition: border-color 0.2s;
+  }
+  .stat-card:hover { border-color: #58a6ff; }
+  .stat-num { font-size: 2.2rem; font-weight: 700; }
+  .stat-label { font-size: 0.78rem; color: #8b949e; margin-top: 4px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .c-blue { color: #58a6ff; }
+  .c-green { color: #3fb950; }
+  .c-orange { color: #d29922; }
+  .c-gray { color: #8b949e; }
+
+  /* ── SECTION ── */
+  .section { margin-bottom: 28px; }
+  .section-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 14px;
+  }
+  .section-title {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: #8b949e;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .badge {
+    background: #21262d;
+    border: 1px solid #30363d;
+    border-radius: 10px;
+    padding: 1px 8px;
+    font-size: 0.75rem;
+    color: #8b949e;
+  }
+
+  /* ── ISSUE CARDS ── */
+  .issue-list { display: flex; flex-direction: column; gap: 10px; }
+  .issue-card {
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 10px;
+    padding: 14px 18px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    transition: border-color 0.2s;
+  }
+  .issue-card:hover { border-color: #58a6ff; }
+  .issue-icon { font-size: 1.2rem; flex-shrink: 0; }
+  .issue-body { flex: 1; min-width: 0; }
+  .issue-title {
+    font-size: 0.9rem;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .issue-meta {
+    font-size: 0.75rem;
+    color: #8b949e;
+    margin-top: 3px;
+    display: flex; gap: 12px; flex-wrap: wrap;
+  }
+  .platform-tag {
+    padding: 1px 8px;
+    border-radius: 10px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+  }
+  .tag-grantfox { background: #1f2d3d; color: #58a6ff; border: 1px solid #1f6feb; }
+  .tag-drips    { background: #2d1f3d; color: #bc8cff; border: 1px solid #6e40c9; }
+  .timer {
+    font-size: 0.8rem;
+    color: #d29922;
+    font-weight: 600;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .timer.urgent { color: #f85149; }
+  .issue-link {
+    color: #58a6ff;
+    text-decoration: none;
+    font-size: 0.8rem;
+    flex-shrink: 0;
+  }
+  .issue-link:hover { text-decoration: underline; }
+
+  /* ── EMPTY STATE ── */
+  .empty {
+    background: #161b22;
+    border: 1px dashed #30363d;
+    border-radius: 10px;
+    padding: 32px;
+    text-align: center;
+    color: #8b949e;
+    font-size: 0.88rem;
+  }
+  .empty-icon { font-size: 2rem; margin-bottom: 8px; }
+
+  /* ── LOG ── */
+  .log-box {
+    background: #0d1117;
+    border: 1px solid #30363d;
+    border-radius: 10px;
+    padding: 16px;
+    font-family: 'Courier New', monospace;
+    font-size: 0.75rem;
+    line-height: 1.6;
+    color: #8b949e;
+    max-height: 320px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+  .log-box::-webkit-scrollbar { width: 6px; }
+  .log-box::-webkit-scrollbar-track { background: transparent; }
+  .log-box::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }
+  .log-line-info  { color: #8b949e; }
+  .log-line-error { color: #f85149; }
+  .log-line-warn  { color: #d29922; }
+
+  /* ── REFRESH ── */
+  .refresh-btn {
+    background: #21262d;
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    color: #8b949e;
+    font-size: 0.8rem;
+    padding: 4px 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .refresh-btn:hover { color: #e6edf3; border-color: #8b949e; }
+
+  /* ── FOOTER ── */
+  .footer {
+    text-align: center;
+    color: #484f58;
+    font-size: 0.75rem;
+    padding: 20px;
+    border-top: 1px solid #21262d;
+    margin-top: 8px;
+  }
+
+  /* ── RESPONSIVE ── */
+  @media (max-width: 600px) {
+    .stats-grid { grid-template-columns: repeat(2, 1fr); }
+    .issue-card { flex-wrap: wrap; }
+    nav { padding: 0 14px; }
+    .nav-sub { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="nav-left">
+    <span class="nav-logo">🤖</span>
+    <div>
+      <div class="nav-title">Issue Bot</div>
+      <div class="nav-sub">GrantFox + Drips Wave</div>
+    </div>
+  </div>
+  <div style="display:flex;align-items:center;gap:12px;">
+    <div class="status-pill">
+      <div class="status-dot"></div>
+      <span id="status-text">Loading...</span>
+    </div>
+    <a href="/logout" class="logout">Sign out</a>
+  </div>
+</nav>
+
+<div class="container">
+
+  <!-- Stats -->
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="stat-num c-blue" id="stat-applied">—</div>
+      <div class="stat-label">Total Applied</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-num c-green" id="stat-accepted">—</div>
+      <div class="stat-label">Accepted</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-num c-orange" id="stat-active">—</div>
+      <div class="stat-label">Pending</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-num c-gray" id="stat-timeout">—</div>
+      <div class="stat-label">Timed Out</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-num c-gray" id="stat-skipped">—</div>
+      <div class="stat-label">Skipped</div>
+    </div>
+  </div>
+
+  <!-- Active Applications -->
+  <div class="section">
+    <div class="section-header">
+      <div class="section-title">
+        ⏳ Active Applications
+        <span class="badge" id="active-count">0</span>
+      </div>
+      <button class="refresh-btn" onclick="loadAll()">↻ Refresh</button>
+    </div>
+    <div class="issue-list" id="active-list">
+      <div class="empty"><div class="empty-icon">📭</div>No active applications</div>
+    </div>
+  </div>
+
+  <!-- Accepted Issues -->
+  <div class="section">
+    <div class="section-header">
+      <div class="section-title">
+        🎉 Accepted Issues
+        <span class="badge" id="accepted-count">0</span>
+      </div>
+    </div>
+    <div class="issue-list" id="accepted-list">
+      <div class="empty"><div class="empty-icon">🏆</div>No accepted issues yet</div>
+    </div>
+  </div>
+
+  <!-- Live Log -->
+  <div class="section">
+    <div class="section-header">
+      <div class="section-title">📋 Activity Log</div>
+      <button class="refresh-btn" onclick="loadLogs()">↻ Refresh</button>
+    </div>
+    <div class="log-box" id="log-box">Loading logs...</div>
+  </div>
+
+</div>
+
+<div class="footer">Issue Bot &nbsp;·&nbsp; Built for Stellar ecosystem &nbsp;·&nbsp; Auto-refreshes every 30s</div>
+
+<script>
+  function platformTag(p) {
+    if (p === 'grantfox') return '<span class="platform-tag tag-grantfox">GrantFox</span>';
+    if (p === 'drips')    return '<span class="platform-tag tag-drips">Drips</span>';
+    return `<span class="platform-tag">${p}</span>`;
+  }
+
+  function timeAgo(isoStr) {
+    if (!isoStr) return '';
+    const diff = (Date.now() - new Date(isoStr + 'Z').getTime()) / 1000;
+    if (diff < 60)   return 'just now';
+    if (diff < 3600) return `${Math.floor(diff/60)}m ago`;
+    if (diff < 86400) return `${Math.floor(diff/3600)}h ago`;
+    return `${Math.floor(diff/86400)}d ago`;
+  }
+
+  async function loadState() {
+    try {
+      const res  = await fetch('/api/state');
+      const data = await res.json();
+
+      // Stats
+      document.getElementById('stat-applied').textContent  = data.stats.applied  ?? 0;
+      document.getElementById('stat-accepted').textContent = data.stats.accepted  ?? 0;
+      document.getElementById('stat-active').textContent   = data.active.length;
+      document.getElementById('stat-timeout').textContent  = data.stats.timed_out ?? 0;
+      document.getElementById('stat-skipped').textContent  = data.skipped ?? 0;
+
+      // Status pill
+      document.getElementById('status-text').textContent =
+        data.active.length > 0 ? `${data.active.length} active` : 'Watching';
+
+      // Active applications
+      const activeEl = document.getElementById('active-list');
+      document.getElementById('active-count').textContent = data.active.length;
+      if (data.active.length === 0) {
+        activeEl.innerHTML = '<div class="empty"><div class="empty-icon">📭</div>No active applications</div>';
+      } else {
+        activeEl.innerHTML = data.active.map(a => {
+          const urgent = a.hours_left < 6;
+          return `
+            <div class="issue-card">
+              <span class="issue-icon">⏳</span>
+              <div class="issue-body">
+                <div class="issue-title">${a.title}</div>
+                <div class="issue-meta">
+                  ${platformTag(a.platform)}
+                  <span>Applied ${timeAgo(a.applied_at)}</span>
+                </div>
+              </div>
+              <span class="timer ${urgent ? 'urgent' : ''}">${a.hours_left}h left</span>
+              <a class="issue-link" href="${a.url}" target="_blank">View →</a>
+            </div>`;
+        }).join('');
+      }
+
+      // Accepted issues
+      const acceptedEl = document.getElementById('accepted-list');
+      document.getElementById('accepted-count').textContent = data.accepted.length;
+      if (data.accepted.length === 0) {
+        acceptedEl.innerHTML = '<div class="empty"><div class="empty-icon">🏆</div>No accepted issues yet — keep going!</div>';
+      } else {
+        acceptedEl.innerHTML = data.accepted.map(a => `
+          <div class="issue-card">
+            <span class="issue-icon">🎉</span>
+            <div class="issue-body">
+              <div class="issue-title">${a.title}</div>
+              <div class="issue-meta">
+                ${platformTag(a.platform)}
+                <span>Accepted ${timeAgo(a.accepted_at)}</span>
+              </div>
+            </div>
+            <a class="issue-link" href="${a.url}" target="_blank">View →</a>
+          </div>`).join('');
+      }
+
+    } catch(e) {
+      document.getElementById('status-text').textContent = 'Error loading data';
+      console.error(e);
+    }
+  }
+
+  async function loadLogs() {
+    try {
+      const res  = await fetch('/api/logs');
+      const data = await res.json();
+      const box  = document.getElementById('log-box');
+      box.innerHTML = data.lines.map(line => {
+        let cls = 'log-line-info';
+        if (line.includes('[ERROR]'))   cls = 'log-line-error';
+        else if (line.includes('[WARNING]')) cls = 'log-line-warn';
+        return `<span class="${cls}">${line}</span>`;
+      }).join('\n');
+      box.scrollTop = box.scrollHeight;
+    } catch(e) {
+      document.getElementById('log-box').textContent = 'Could not load logs.';
+    }
+  }
+
+  function loadAll() { loadState(); loadLogs(); }
+
+  // Initial load + auto-refresh every 30s
+  loadAll();
+  setInterval(loadAll, 30000);
+</script>
+</body>
+</html>

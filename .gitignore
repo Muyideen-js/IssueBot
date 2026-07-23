@@ -1,0 +1,24 @@
+# Secrets — NEVER commit these
+.env
+sessions/
+
+# Auto-generated files
+bot.log
+state.json
+*.png
+debug_*.png
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.Python
+*.egg-info/
+dist/
+build/
+
+# VS Code
+.vscode/
+
+# Mac
+.DS_Store

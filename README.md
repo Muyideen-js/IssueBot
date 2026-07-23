@@ -1,8 +1,36 @@
-# 🤖 Browser Automation Bot — GrantFox + Drips Wave
+# 🤖 IssueBot — GrantFox + Drips Wave Automation
 
-Automatically logs into GrantFox and Drips Wave via GitHub OAuth, clicks the
-Apply button on open issues, monitors for assignment, cancels on timeout, and
-sends every update to Telegram.
+Automatically applies for open issues on GrantFox and Drips Wave,
+monitors assignment, cancels on timeout, and sends Telegram notifications.
+Includes a live web dashboard your friends can view from anywhere.
+
+---
+
+## 📁 File Structure
+
+```
+IssueBot/
+├── bot.py              ← browser automation (runs on your PC)
+├── dashboard.py        ← web dashboard server (deploy to Render)
+├── run.py              ← starts both bot + dashboard together
+├── debug_selectors.py  ← debugging tool for CSS selectors
+├── requirements.txt    ← all Python dependencies
+├── render.yaml         ← Render deploy config
+├── .env                ← your credentials (never commit!)
+├── .env.example        ← template for .env
+├── .gitignore          ← protects secrets from git
+│
+├── templates/          ← dashboard HTML pages
+│   ├── index.html      ← main dashboard UI
+│   └── login.html      ← password login page
+│
+├── sessions/           ← browser sessions (auto-created)
+│   ├── grantfox.json
+│   └── drips.json
+│
+├── state.json          ← bot state (auto-created)
+└── bot.log             ← activity log (auto-created)
+```
 
 ---
 
@@ -14,13 +42,13 @@ pip install -r requirements.txt
 python -m playwright install chromium
 ```
 
-### 2. Configure your `.env`
+### 2. Configure your .env
 ```bash
-cp .env.example .env
+copy .env.example .env
 ```
-Fill in your credentials — see `.env.example` for details.
+Fill in your GitHub credentials, Telegram tokens, etc.
 
-### 3. Login once (saves your session)
+### 3. Login once (saves your browser session)
 ```bash
 # Both platforms
 python bot.py --login
@@ -31,178 +59,109 @@ python bot.py --login --platform drips
 # GrantFox only
 python bot.py --login --platform grantfox
 ```
-A browser window opens. Log in, then press ENTER in the terminal.
+Browser opens → log in → press ENTER → session saved.
 **Do NOT close the browser before pressing ENTER.**
 
-### 4. Run the bot
+### 4. Run everything
 ```bash
-# Both platforms (default)
-python bot.py
+# Start bot + dashboard together (recommended)
+python run.py
 
-# Drips Wave only
-python bot.py --platform drips
-
-# GrantFox only
-python bot.py --platform grantfox
-
-# Run once then exit (good for testing or cron)
-python bot.py --once
-python bot.py --once --platform drips
+# Or run separately:
+python bot.py              # bot only
+python dashboard.py        # dashboard only (http://localhost:5000)
 ```
 
 ---
 
-## 🧩 All Commands
+## 🧩 All Bot Commands
 
 | Command | What it does |
 |---|---|
-| `python bot.py` | Run forever on both platforms |
-| `python bot.py --platform drips` | Drips Wave only, run forever |
-| `python bot.py --platform grantfox` | GrantFox only, run forever |
-| `python bot.py --once` | Both platforms, single cycle then exit |
-| `python bot.py --once --platform drips` | Drips only, single cycle |
+| `python run.py` | Start bot + dashboard (both platforms) |
+| `python run.py --platform drips` | Drips Wave only |
+| `python run.py --platform grantfox` | GrantFox only |
+| `python run.py --once` | Run one cycle then exit |
 | `python bot.py --login` | Login to both platforms |
 | `python bot.py --login --platform drips` | Login to Drips only |
-| `python bot.py --login --platform grantfox` | Login to GrantFox only |
 
 ---
 
-## 🔄 What Happens Each Cycle
+## 🌐 Deploy Dashboard to Render (Free)
 
+So your friends can see the dashboard from anywhere:
+
+### Step 1 — Push this repo to GitHub
+```bash
+git add .
+git commit -m "IssueBot"
+git push
 ```
-Every 30 minutes:
 
-1. CHECK active applications
-   ├─ Assigned to you? → 🎉 Telegram alert, mark done
-   ├─ Timed out (>24h)? → clicks Withdraw, Telegram alert, hunts next
-   └─ Still pending? → logs time remaining
+### Step 2 — Deploy on Render
+1. Go to [render.com](https://render.com) → Sign up free
+2. New → Web Service → Connect your GitHub repo
+3. Render auto-detects `render.yaml` → click Deploy
 
-2. HUNT new issues (if slots available)
-   ├─ Scrapes open issues on selected platform(s)
-   ├─ Skips already-tried issues
-   └─ Clicks Apply → Telegram alert
+### Step 3 — Set environment variables on Render
+Go to your Render service → Environment → Add:
 ```
+DASHBOARD_PASSWORD    = (password to share with friends)
+DASHBOARD_SECRET_KEY  = (any random string)
+SYNC_SECRET           = (must match SYNC_SECRET in your .env)
+```
+
+### Step 4 — Add Render URL to your .env
+```env
+DASHBOARD_URL=https://your-app-name.onrender.com
+SYNC_SECRET=same-secret-as-render
+```
+
+Now every time the bot runs, it pushes stats to Render.
+Friends open your URL, enter the password, see everything live.
 
 ---
 
 ## 📱 Telegram Notifications
 
-| Event | Alert |
+| Event | Message |
 |---|---|
-| Bot started | 🤖 startup message with config |
-| Applied for issue | ✅ platform + title + URL + timeout countdown |
-| Issue assigned | 🎉 platform + title + link |
-| Application timed out | ⏰ cancelled + hunting next |
-| Any error | ⚠️ error message |
-
----
-
-## 🚀 Keep It Running 24/7
-
-### Option A — Screen (quickest on any machine)
-```bash
-screen -S bot
-python bot.py --platform drips
-# Ctrl+A then D to detach
-# screen -r bot to reattach
-```
-
-### Option B — Systemd (Linux VPS, recommended)
-```ini
-# /etc/systemd/system/issuebot.service
-[Unit]
-Description=Issue Bot
-After=network.target
-
-[Service]
-WorkingDirectory=/path/to/browser-bot
-ExecStart=/usr/bin/python3 bot.py --platform drips
-Restart=always
-RestartSec=30
-
-[Install]
-WantedBy=multi-user.target
-```
-```bash
-sudo systemctl enable issuebot
-sudo systemctl start issuebot
-sudo journalctl -fu issuebot   # view live logs
-```
-
-### Option C — GitHub Actions (free, no server needed)
-```yaml
-# .github/workflows/bot.yml
-name: Issue Bot
-on:
-  schedule:
-    - cron: '*/30 * * * *'
-  workflow_dispatch:
-
-jobs:
-  run:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: { python-version: '3.11' }
-      - run: pip install -r requirements.txt && python -m playwright install chromium
-      - run: python bot.py --once --platform drips
-        env:
-          GITHUB_USERNAME: ${{ secrets.GITHUB_USERNAME }}
-          GITHUB_PASSWORD: ${{ secrets.GITHUB_PASSWORD }}
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-```
+| Bot started | Startup message with config |
+| Applied for issue | Platform + title + URL + countdown |
+| Issue assigned to you | Title + link |
+| Application timed out | Cancelled + hunting next |
+| Error | Error message |
 
 ---
 
 ## 🛠 Troubleshooting
 
-### Apply button not found
-The platform UI may have updated. Run the selector debugger:
+### Apply button not found / 0 issues found
+Run the selector debugger:
 ```bash
-python debug_selectors.py drips
 python debug_selectors.py grantfox
+python debug_selectors.py drips
 ```
-Then update the selector strings in the `apply()` method of the relevant class in `bot.py`.
 
-### Session expired / login fails
-Delete the old session file and re-login:
+### Session expired
 ```bash
-del sessions\drips.json        # Windows
-rm sessions/drips.json          # Mac/Linux
-python bot.py --login --platform drips
+# Delete old session and re-login
+del sessions\grantfox.json
+python bot.py --login --platform grantfox
 ```
 
 ### See what the browser is doing
-Set `HEADLESS=false` in your `.env`, then run:
-```bash
-python bot.py --once --platform drips
-```
+Set `HEADLESS=false` in `.env` then run normally.
+
+### GrantFox shows "NOT REGISTERED"
+Go to https://contribute.grantfox.xyz/issues and click REGISTER manually.
+The bot will detect this and alert you on Telegram.
 
 ---
 
-## 📂 File Structure
+## ⚠️ Notes
 
-```
-browser-bot/
-├── bot.py                  # main bot — all logic
-├── debug_selectors.py      # finds correct CSS selectors when UI changes
-├── .env                    # your credentials (never commit this!)
-├── .env.example            # template
-├── requirements.txt
-├── sessions/               # saved browser sessions (auto-created)
-│   ├── grantfox.json
-│   └── drips.json
-├── state.json              # persisted application state (auto-created)
-└── bot.log                 # activity log (auto-created)
-```
-
----
-
-## ⚠️ Important Notes
-
-- **Drips Wave Wave 6**: max 5 repo applications per wave per user
-- **KYC**: Drips requires KYC to withdraw earnings — complete in Settings before wave ends
-- **Session lifetime**: sessions last days to weeks — re-run `--login` if you get auth errors
-- **`HEADLESS=false`**: always use this when debugging so you can see what's happening
+- **Drips Wave Wave 6**: max 5 applications per wave per user
+- **Always review** before marking assigned issues as done
+- **Sessions** last days to weeks — re-run `--login` if auth fails
+- **Render free tier** sleeps after 15 min inactivity — first visit takes ~30s to wake up
