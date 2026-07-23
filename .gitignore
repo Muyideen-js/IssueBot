@@ -1,10 +1,13 @@
 # Secrets — NEVER commit these
 .env
 sessions/
+users/
 
 # Auto-generated files
 bot.log
+logs/
 state.json
+states/
 *.png
 debug_*.png
 

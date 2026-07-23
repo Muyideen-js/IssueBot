@@ -44,10 +44,46 @@ MAX_ACTIVE             = int(os.getenv("MAX_ACTIVE_APPLICATIONS", "3"))
 HEADLESS               = os.getenv("HEADLESS", "true").lower() == "true"
 
 SESSION_DIR            = Path("sessions")
+STATE_DIR              = Path("states")
+LOG_DIR                = Path("logs")
+USER_DIR               = Path("users")
+
+SESSION_DIR.mkdir(exist_ok=True)
+STATE_DIR.mkdir(exist_ok=True)
+LOG_DIR.mkdir(exist_ok=True)
+USER_DIR.mkdir(exist_ok=True)
+
 STATE_FILE             = Path("state.json")
 LOG_FILE               = "bot.log"
 DASHBOARD_URL          = os.getenv("DASHBOARD_URL", "")   # your Render URL
 SYNC_SECRET            = os.getenv("SYNC_SECRET", "sync-secret-123")
+CURRENT_USER           = ""
+
+def set_current_user(username: str):
+    global CURRENT_USER, STATE_FILE, LOG_FILE, GITHUB_USERNAME, GITHUB_PASSWORD, GITHUB_OTP_SECRET, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+    if not username:
+        return
+    CURRENT_USER = username
+    STATE_FILE = STATE_DIR / f"state_{username}.json"
+    LOG_FILE = str(LOG_DIR / f"bot_{username}.log")
+
+    # Load user config if present
+    user_conf_file = USER_DIR / f"user_{username}.json"
+    if user_conf_file.exists():
+        try:
+            data = json.loads(user_conf_file.read_text(encoding="utf-8"))
+            if data.get("github_username"):
+                GITHUB_USERNAME = data["github_username"]
+            if data.get("github_password"):
+                GITHUB_PASSWORD = data["github_password"]
+            if data.get("github_otp_secret"):
+                GITHUB_OTP_SECRET = data["github_otp_secret"]
+            if data.get("telegram_bot_token"):
+                TELEGRAM_BOT_TOKEN = data["telegram_bot_token"]
+            if data.get("telegram_chat_id"):
+                TELEGRAM_CHAT_ID = data["telegram_chat_id"]
+        except Exception as e:
+            pass
 
 # ─── LOGGING (UTF-8 safe on Windows) ──────────────────────────────────────────
 def _safe(msg: str) -> str:
@@ -84,7 +120,10 @@ def tg(msg: str):
 # ─── STATE ─────────────────────────────────────────────────────────────────────
 def load_state() -> dict:
     if STATE_FILE.exists():
-        return json.loads(STATE_FILE.read_text())
+        try:
+            return json.loads(STATE_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            pass
     return {
         "applications": {},
         "skipped": [],
@@ -93,7 +132,7 @@ def load_state() -> dict:
     }
 
 def save_state(s: dict):
-    STATE_FILE.write_text(json.dumps(s, indent=2))
+    STATE_FILE.write_text(json.dumps(s, indent=2), encoding="utf-8")
 
 # ─── DASHBOARD SYNC ────────────────────────────────────────────────────────────
 def sync_dashboard(state: dict):
@@ -104,10 +143,13 @@ def sync_dashboard(state: dict):
         logs = []
         if Path(LOG_FILE).exists():
             logs = Path(LOG_FILE).read_text(encoding="utf-8", errors="replace").splitlines()[-100:]
+        headers = {"X-Sync-Secret": SYNC_SECRET}
+        if CURRENT_USER:
+            headers["X-User-Name"] = CURRENT_USER
         requests.post(
             f"{DASHBOARD_URL.rstrip('/')}/sync",
-            headers={"X-Sync-Secret": SYNC_SECRET},
-            json={"state": state, "logs": logs},
+            headers=headers,
+            json={"state": state, "logs": logs, "username": CURRENT_USER},
             timeout=10
         )
         log.info("Dashboard synced")
@@ -115,9 +157,14 @@ def sync_dashboard(state: dict):
         log.warning(f"Dashboard sync failed: {e}")
 
 # ─── BROWSER SETUP ─────────────────────────────────────────────────────────────
-def make_context(pw, platform: str) -> BrowserContext:
+def get_storage_path(platform: str) -> Path:
     SESSION_DIR.mkdir(exist_ok=True)
-    storage = SESSION_DIR / f"{platform}.json"
+    if CURRENT_USER:
+        return SESSION_DIR / f"{CURRENT_USER}_{platform}.json"
+    return SESSION_DIR / f"{platform}.json"
+
+def make_context(pw, platform: str) -> BrowserContext:
+    storage = get_storage_path(platform)
     browser = pw.chromium.launch(
         headless=HEADLESS,
         args=["--no-sandbox", "--disable-blink-features=AutomationControlled"]
@@ -134,9 +181,9 @@ def make_context(pw, platform: str) -> BrowserContext:
     return ctx
 
 def save_session(ctx: BrowserContext, platform: str):
-    SESSION_DIR.mkdir(exist_ok=True)
-    ctx.storage_state(path=str(SESSION_DIR / f"{platform}.json"))
-    log.info(f"Session saved for {platform}")
+    storage = get_storage_path(platform)
+    ctx.storage_state(path=str(storage))
+    log.info(f"Session saved for {platform} at {storage}")
 
 # ─── GITHUB OAUTH HELPER ───────────────────────────────────────────────────────
 def github_login(page: Page):
@@ -764,7 +811,11 @@ def main():
     parser.add_argument("--login",    action="store_true")
     parser.add_argument("--once",     action="store_true")
     parser.add_argument("--platform", choices=["grantfox", "drips", "both"], default="both")
+    parser.add_argument("--username", type=str, default="", help="Username for multi-tenant state and session isolation")
     args = parser.parse_args()
+
+    if args.username:
+        set_current_user(args.username)
 
     platforms = ["grantfox", "drips"] if args.platform == "both" else [args.platform]
 
@@ -773,7 +824,7 @@ def main():
         return
 
     if not GITHUB_USERNAME:
-        log.error("GITHUB_USERNAME not set in .env")
+        log.error("GITHUB_USERNAME not set in .env or user settings")
         sys.exit(1)
 
     label = "GrantFox + Drips Wave" if len(platforms) > 1 else platforms[0].upper()
