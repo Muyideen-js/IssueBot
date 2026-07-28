@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """
-Drips Wave Fast Apply Bot
-=========================
-Uses Playwright to grab auth cookies + turnstile token ONCE,
-then fires POST requests to ALL open issues back to back via API.
-Much faster than clicking each button individually.
+Drips Wave Smart Bot
+====================
+- Watches for NEW issues dropped on Drips Wave
+- Applies IMMEDIATELY when a new issue appears
+- Withdraws applications pending > 1hr and reapplies to new ones
+- Keeps 15 slots always filled with the FRESHEST issues
 
 Usage:
-  python drips_fast.py          # apply for all open issues
-  python drips_fast.py --watch  # apply then watch for new issues every 10 min
+  python drips_fast.py           # single run (for GitHub Actions)
+  python drips_fast.py --watch   # loop every 5 min (local PC)
 """
 
 import os
@@ -18,6 +19,7 @@ import time
 import logging
 import argparse
 import requests
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from dotenv import load_dotenv
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
@@ -25,27 +27,28 @@ from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 load_dotenv()
 
 # ─── CONFIG ────────────────────────────────────────────────────────────────────
-WAVE_PROGRAM_ID   = "fdc01c95-806f-4b6a-998b-a6ed37e0d81b"
-WAVE_API          = "https://wave-api.drips.network/api"
-DRIPS_URL         = "https://www.drips.network/wave/stellar/issues"
-SESSION_FILE      = Path("sessions/drips.json")
-APPLIED_FILE      = Path("drips_applied.json")
+WAVE_PROGRAM_ID  = "fdc01c95-806f-4b6a-998b-a6ed37e0d81b"
+WAVE_API         = "https://wave-api.drips.network/api"
+DRIPS_URL        = "https://www.drips.network/wave/stellar/issues"
+SESSION_FILE     = Path("sessions/drips.json")
+SEEN_FILE        = Path("drips_seen.json")       # all issue IDs we've ever seen
+APPLIED_FILE     = Path("drips_applied.json")    # issue IDs we applied to
 
-GITHUB_USERNAME   = os.getenv("GITHUB_USERNAME", "")
-TELEGRAM_TOKEN    = os.getenv("TELEGRAM_BOT_TOKEN", "")
-TELEGRAM_CHAT_ID  = os.getenv("TELEGRAM_CHAT_ID", "")
-HEADLESS          = os.getenv("HEADLESS", "true").lower() == "true"
+GITHUB_USERNAME  = os.getenv("GITHUB_USERNAME", "")
+GITHUB_PASSWORD  = os.getenv("GITHUB_PASSWORD", "")
+TELEGRAM_TOKEN   = os.getenv("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+HEADLESS         = os.getenv("HEADLESS", "true").lower() == "true"
+ROTATE_HOURS     = float(os.getenv("ROTATE_HOURS", "1"))    # withdraw after 1hr
+MAX_SLOTS        = int(os.getenv("MAX_SLOTS", "15"))
 
-APPLICATION_TEXT  = os.getenv(
+APPLICATION_TEXT = os.getenv(
     "APPLICATION_TEXT",
-    "Hi! I'm a full-stack developer experienced with TypeScript and the Stellar ecosystem. "
-    "I've reviewed this issue and I'm confident I can deliver a quality fix. "
-    "Please assign this to me!"
+    "Hi! I'm a full-stack developer with TypeScript and Stellar ecosystem experience. "
+    "I've reviewed this issue and can deliver a quality fix. Please assign this to me!"
 )
 
 # ─── LOGGING ───────────────────────────────────────────────────────────────────
-import io as _io
-
 class SafeHandler(logging.StreamHandler):
     def emit(self, record):
         record.msg = str(record.msg).encode("ascii", errors="replace").decode("ascii")
@@ -70,26 +73,52 @@ def tg(msg: str):
             timeout=10
         )
     except Exception as e:
-        log.error(f"Telegram error: {e}")
+        log.error(f"Telegram: {e}")
 
-# ─── APPLIED TRACKER ───────────────────────────────────────────────────────────
-def load_applied() -> set:
-    if APPLIED_FILE.exists():
-        return set(json.loads(APPLIED_FILE.read_text()))
-    return set()
+# ─── STATE ─────────────────────────────────────────────────────────────────────
+def load_json(path: Path, default) -> set | list:
+    if path.exists():
+        try:
+            data = json.loads(path.read_text())
+            return set(data) if isinstance(default, set) else data
+        except Exception:
+            pass
+    return default
 
-def save_applied(applied: set):
-    APPLIED_FILE.write_text(json.dumps(list(applied)))
+def save_json(path: Path, data):
+    path.write_text(json.dumps(list(data) if isinstance(data, set) else data))
 
-# ─── BROWSER: GET AUTH COOKIES + TURNSTILE TOKEN ───────────────────────────────
+# ─── HEADERS ───────────────────────────────────────────────────────────────────
+def make_headers(auth: dict) -> dict:
+    h = {
+        "content-type": "application/json",
+        "referer": "https://www.drips.network/",
+        "user-agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/150.0.0.0 Safari/537.36"
+        ),
+        "x-timezone": "Africa/Lagos",
+    }
+    if auth.get("cookies"):    h["cookie"]              = auth["cookies"]
+    if auth.get("turnstile"):  h["x-turnstile-token"]   = auth["turnstile"]
+    if auth.get("wave_token"): h["authorization"]        = auth["wave_token"]
+    return h
+
+# ─── SESSION ───────────────────────────────────────────────────────────────────
+def session_valid(auth: dict) -> bool:
+    try:
+        r = requests.get(
+            f"{WAVE_API}/user/me",
+            headers=make_headers(auth),
+            timeout=10
+        )
+        return r.status_code == 200
+    except Exception:
+        return False
+
 def get_auth_session() -> dict:
-    """
-    Open Drips Wave in browser, intercept the auth cookies and
-    a fresh turnstile token from a real Apply click.
-    Returns dict with cookies and token ready for API calls.
-    """
-    log.info("Opening browser to grab auth session...")
-
+    log.info("Opening browser to grab session...")
     captured = {"cookies": None, "turnstile": None, "wave_token": None}
 
     with sync_playwright() as pw:
@@ -109,255 +138,380 @@ def get_auth_session() -> dict:
         )
         page = ctx.new_page()
 
-        # Intercept API requests to steal the turnstile token
         turnstile_tokens = []
         wave_tokens = []
 
         def on_request(req):
             if "wave-api.drips.network" in req.url:
-                headers = req.headers
-                t = headers.get("x-turnstile-token")
-                w = headers.get("authorization") or headers.get("x-auth-token")
-                if t:
-                    turnstile_tokens.append(t)
-                if w:
-                    wave_tokens.append(w)
+                h = req.headers
+                t = h.get("x-turnstile-token")
+                w = h.get("authorization")
+                if t: turnstile_tokens.append(t)
+                if w: wave_tokens.append(w)
 
         page.on("request", on_request)
 
-        # Load issues page
-        log.info("Loading Drips Wave issues page...")
         try:
             page.goto(DRIPS_URL, wait_until="networkidle", timeout=60000)
         except PWTimeout:
-            log.warning("Page load timeout — continuing anyway")
-        page.wait_for_timeout(4000)
+            pass
+        page.wait_for_timeout(3000)
 
-        # Check if logged in
         body = page.inner_text("body").lower()
         if "log in" in body or "sign in" in body:
             log.error("Not logged in! Run: python bot.py --login --platform drips")
             browser.close()
             return {}
 
-        # Click Apply on the FIRST available issue to get a fresh turnstile token
-        log.info("Clicking Apply on first issue to capture turnstile token...")
-        apply_btn = page.query_selector(
-            "button:has-text('Apply'), button:has-text('Apply to issue')"
-        )
-        if apply_btn:
-            apply_btn.click()
+        # Navigate to first issue to trigger API calls
+        first_link = page.query_selector("a[href*='/issues/']")
+        if first_link:
+            href = first_link.get_attribute("href") or ""
+            url  = href if href.startswith("http") else f"https://www.drips.network{href}"
+            try:
+                page.goto(url, wait_until="networkidle", timeout=30000)
+            except PWTimeout:
+                pass
             page.wait_for_timeout(3000)
 
-            # Confirm if modal appears
-            confirm = page.query_selector(
-                "button:has-text('Confirm'), button:has-text('Submit')"
-            )
-            if confirm:
-                confirm.click()
-                page.wait_for_timeout(2000)
+            # Try clicking Apply to get turnstile token
+            page.evaluate("""
+                () => {
+                    const btn = Array.from(document.querySelectorAll('button'))
+                        .find(b => b.textContent.trim().toLowerCase() === 'apply' && !b.disabled);
+                    if (btn) btn.click();
+                }
+            """)
+            page.wait_for_timeout(3000)
+            page.evaluate("""
+                () => {
+                    const btn = Array.from(document.querySelectorAll('button'))
+                        .find(b => ['confirm','submit','yes'].some(w =>
+                            b.textContent.trim().toLowerCase().includes(w)));
+                    if (btn) btn.click();
+                }
+            """)
+            page.wait_for_timeout(2000)
 
-        # Grab cookies
         cookies = ctx.cookies()
-        cookie_str = "; ".join([f"{c['name']}={c['value']}" for c in cookies])
-        captured["cookies"] = cookie_str
+        captured["cookies"]    = "; ".join([f"{c['name']}={c['value']}" for c in cookies])
+        captured["turnstile"]  = turnstile_tokens[-1] if turnstile_tokens else None
+        captured["wave_token"] = wave_tokens[-1] if wave_tokens else None
 
-        if turnstile_tokens:
-            captured["turnstile"] = turnstile_tokens[-1]
-            log.info("Turnstile token captured!")
-        else:
-            log.warning("No turnstile token captured — trying page evaluation...")
-            try:
-                token = page.evaluate("window.__turnstileToken || ''")
-                if token:
-                    captured["turnstile"] = token
-            except Exception:
-                pass
-
-        if wave_tokens:
-            captured["wave_token"] = wave_tokens[-1]
-
-        # Save session
         SESSION_FILE.parent.mkdir(exist_ok=True)
         ctx.storage_state(path=str(SESSION_FILE))
         browser.close()
 
-    log.info(f"Auth session ready. Cookies: {'yes' if captured['cookies'] else 'no'}, "
-             f"Turnstile: {'yes' if captured['turnstile'] else 'no'}")
+    log.info(f"Session | Cookies: {'yes' if captured['cookies'] else 'no'} | Turnstile: {'yes' if captured['turnstile'] else 'no'}")
     return captured
 
-# ─── API: FETCH ALL OPEN ISSUES ────────────────────────────────────────────────
-def fetch_all_issues(auth: dict) -> list[dict]:
-    """Fetch ALL open issues from the Drips Wave API."""
-    issues = []
-    limit  = 100
-    offset = 0
+# ─── FETCH ISSUES ──────────────────────────────────────────────────────────────
+def fetch_latest_issues(auth: dict, limit: int = 100) -> list[dict]:
+    """
+    Fetch the most recently updated open issues.
+    Sorted by updatedAt so newest drops appear first.
+    """
+    headers = make_headers(auth)
+    issues  = []
+    seen    = set()
 
-    headers = {
-        "content-type": "application/json",
-        "referer": "https://www.drips.network/",
-        "user-agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/150.0.0.0 Safari/537.36"
-        ),
-        "x-timezone": "Africa/Lagos",
-    }
-    if auth.get("cookies"):
-        headers["cookie"] = auth["cookies"]
-    if auth.get("wave_token"):
-        headers["authorization"] = auth["wave_token"]
-
-    while True:
-        url = (
-            f"{WAVE_API}/issues"
-            f"?limit={limit}&offset={offset}"
-            f"&waveProgramId={WAVE_PROGRAM_ID}"
-            f"&state=open"
-            f"&sortBy=updatedAt"
-        )
-        try:
-            r = requests.get(url, headers=headers, timeout=30)
-            r.raise_for_status()
-            data = r.json()
-            batch = data.get("data") or data if isinstance(data, list) else []
-            if not batch:
-                break
-            issues.extend(batch)
-            log.info(f"Fetched {len(issues)} issues so far...")
-            if len(batch) < limit:
-                break
-            offset += limit
-            time.sleep(0.5)
-        except Exception as e:
-            log.error(f"Failed to fetch issues: {e}")
-            break
-
-    log.info(f"Total open issues found: {len(issues)}")
-    return issues
-
-# ─── API: APPLY FOR ONE ISSUE ──────────────────────────────────────────────────
-def apply_for_issue(issue: dict, auth: dict) -> bool:
-    """Fire a POST request to apply for one issue."""
-    issue_id   = issue.get("id")
-    issue_title = issue.get("title", "Unknown")
-
-    if not issue_id:
-        return False
-
-    url = f"{WAVE_API}/wave-programs/{WAVE_PROGRAM_ID}/issues/{issue_id}/applications"
-
-    headers = {
-        "content-type": "application/json",
-        "referer": "https://www.drips.network/",
-        "user-agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/150.0.0.0 Safari/537.36"
-        ),
-        "x-timezone": "Africa/Lagos",
-    }
-    if auth.get("cookies"):
-        headers["cookie"] = auth["cookies"]
-    if auth.get("turnstile"):
-        headers["x-turnstile-token"] = auth["turnstile"]
-    if auth.get("wave_token"):
-        headers["authorization"] = auth["wave_token"]
-
-    payload = {"applicationText": APPLICATION_TEXT}
-
+    url = (
+        f"{WAVE_API}/issues"
+        f"?limit={limit}&offset=0"
+        f"&waveProgramId={WAVE_PROGRAM_ID}"
+        f"&state=open&sortBy=updatedAt"
+    )
     try:
-        r = requests.post(url, headers=headers, json=payload, timeout=15)
+        r = requests.get(url, headers=headers, timeout=30)
+        if r.status_code == 401:
+            log.warning("Session expired")
+            return []
+        data  = r.json()
+        batch = data.get("data") or []
+        pagination = data.get("pagination") or {}
+        total = pagination.get("total") or 0
+        log.info(f"Total open issues on platform: {total}")
 
-        if r.status_code == 201:
-            log.info(f"Applied: {issue_title[:60]}")
-            return True
-        elif r.status_code == 409:
-            log.info(f"Already applied: {issue_title[:50]}")
-            return True   # count as done
-        elif r.status_code == 403:
-            log.warning(f"Forbidden (slot limit or Cloudflare): {issue_title[:40]}")
-            return False
-        elif r.status_code == 429:
-            log.warning("Rate limited — sleeping 5s...")
-            time.sleep(5)
-            return False
-        else:
-            log.warning(f"Unexpected {r.status_code} for {issue_title[:40]}: {r.text[:100]}")
-            return False
+        for issue in batch:
+            iid = issue.get("id")
+            if iid and iid not in seen:
+                seen.add(iid)
+                issues.append(issue)
 
     except Exception as e:
-        log.error(f"Apply error for {issue_title[:40]}: {e}")
+        log.error(f"fetch_latest_issues error: {e}")
+
+    return issues
+
+# ─── FETCH MY APPLICATIONS ─────────────────────────────────────────────────────
+def fetch_my_applications(auth: dict) -> list[dict]:
+    headers = make_headers(auth)
+    for url in [
+        f"{WAVE_API}/wave-programs/{WAVE_PROGRAM_ID}/applications?status=pending&limit=50",
+        f"{WAVE_API}/user/applications?waveProgramId={WAVE_PROGRAM_ID}&status=pending&limit=50",
+    ]:
+        try:
+            r = requests.get(url, headers=headers, timeout=30)
+            log.info(f"My apps [{r.status_code}]: {r.text[:150]}")
+            if r.status_code == 200:
+                d = r.json()
+                result = d if isinstance(d, list) else (d.get("data") or d.get("applications") or [])
+                if result:
+                    return result
+        except Exception as e:
+            log.error(f"fetch_my_applications error: {e}")
+    return []
+
+# ─── WITHDRAW ──────────────────────────────────────────────────────────────────
+def withdraw(app: dict, auth: dict) -> bool:
+    app_id   = app.get("id")
+    issue    = app.get("issue") or {}
+    issue_id = app.get("issueId") or issue.get("id")
+    title    = issue.get("title") or "Unknown"
+
+    if not app_id or not issue_id:
+        log.warning(f"Cannot withdraw — missing fields: {list(app.keys())}")
         return False
 
-# ─── MAIN APPLY LOOP ───────────────────────────────────────────────────────────
-def apply_all(watch: bool = False):
-    applied = load_applied()
+    url = f"{WAVE_API}/wave-programs/{WAVE_PROGRAM_ID}/issues/{issue_id}/applications/{app_id}"
+    try:
+        r = requests.delete(url, headers=make_headers(auth), timeout=15)
+        if r.status_code in (200, 204):
+            log.info(f"Withdrawn: {title[:60]}")
+            return True
+        log.warning(f"Withdraw {r.status_code}: {r.text[:80]}")
+        return False
+    except Exception as e:
+        log.error(f"Withdraw error: {e}")
+        return False
 
-    log.info("Getting auth session from browser...")
-    auth = get_auth_session()
-    if not auth:
-        log.error("Could not get auth session. Run: python bot.py --login --platform drips")
-        return
+# ─── APPLY ─────────────────────────────────────────────────────────────────────
+def apply(issue: dict, auth: dict) -> str:
+    """Returns: ok | taken | quota | expired | error"""
+    issue_id = issue.get("id")
+    title    = issue.get("title", "")
 
-    tg(
-        f"*Drips Fast Bot Started*\n\n"
-        f"User: `{GITHUB_USERNAME}`\n"
-        f"Mode: {'Watch (runs every 10 min)' if watch else 'Single run'}\n"
-        f"Fetching all open issues..."
-    )
+    url = f"{WAVE_API}/wave-programs/{WAVE_PROGRAM_ID}/issues/{issue_id}/applications"
+    try:
+        r = requests.post(
+            url,
+            headers=make_headers(auth),
+            json={"applicationText": APPLICATION_TEXT},
+            timeout=15
+        )
 
-    while True:
-        log.info("=== Fetching all open issues ===")
-        issues = fetch_all_issues(auth)
+        if r.status_code == 201:
+            log.info(f"Applied: {title[:70]}")
+            return "ok"
 
-        new_issues = [i for i in issues if i.get("id") not in applied]
-        log.info(f"New issues to apply for: {len(new_issues)}")
+        err = ""
+        try: err = r.json().get("error", "")
+        except Exception: err = r.text[:100]
 
-        if not new_issues:
-            log.info("No new issues — all caught up!")
-            tg("No new issues to apply for right now.")
+        if r.status_code == 400:
+            if "accepted application" in err:    return "taken"
+            if "already applied" in err.lower(): return "taken"
+            if "quota" in err.lower() or "at most" in err.lower():
+                log.warning(f"QUOTA FULL: {err}")
+                return "quota"
+            log.warning(f"400: {err[:80]}")
+            return "error"
+
+        if r.status_code == 401: return "expired"
+        if r.status_code == 429:
+            time.sleep(5)
+            return "error"
+
+        log.warning(f"{r.status_code}: {err[:80]}")
+        return "error"
+
+    except Exception as e:
+        log.error(f"Apply error: {e}")
+        return "error"
+
+# ─── MAIN CYCLE ────────────────────────────────────────────────────────────────
+def run_cycle(auth: dict) -> tuple[dict, bool]:
+    """
+    One cycle:
+    1. Fetch my current applications
+    2. Withdraw ones pending > ROTATE_HOURS
+    3. Fetch latest issues
+    4. Apply to NEW issues (ones we haven't seen before) first
+    5. Fill remaining slots with any available issues
+
+    Returns (auth, needs_session_refresh)
+    """
+    log.info("=== Cycle start ===")
+    now_utc  = datetime.now(timezone.utc)
+    seen     = load_json(SEEN_FILE, set())
+    applied  = load_json(APPLIED_FILE, set())
+
+    # ── Step 1: Check my applications ────────────────────────────────────────
+    my_apps = fetch_my_applications(auth)
+    log.info(f"Active applications: {len(my_apps)}")
+
+    withdrawn  = 0
+    still_open = 0
+    withdrawn_issue_ids = set()
+
+    for app in my_apps:
+        applied_at_str = app.get("appliedAt") or app.get("createdAt") or ""
+        try:
+            applied_at = datetime.fromisoformat(applied_at_str.replace("Z", "+00:00"))
+            age_hours  = (now_utc - applied_at).total_seconds() / 3600
+        except Exception:
+            age_hours  = 0
+
+        if age_hours >= ROTATE_HOURS:
+            issue    = app.get("issue") or {}
+            issue_id = app.get("issueId") or issue.get("id")
+            log.info(f"Withdrawing ({age_hours:.1f}h old): {issue.get('title','')[:50]}")
+            if withdraw(app, auth):
+                withdrawn += 1
+                if issue_id:
+                    withdrawn_issue_ids.add(issue_id)
+                    # Remove from applied so we can reapply if still open
+                    applied.discard(issue_id)
+            time.sleep(0.5)
         else:
-            success = 0
-            fail    = 0
-            for issue in new_issues:
-                ok = apply_for_issue(issue, auth)
-                if ok:
-                    applied.add(issue["id"])
-                    save_applied(applied)
-                    success += 1
-                else:
-                    fail += 1
+            still_open += 1
 
-                # Small delay between requests — be polite
-                time.sleep(0.8)
+    if withdrawn > 0:
+        save_json(APPLIED_FILE, applied)
+        log.info(f"Withdrawn: {withdrawn} | Still active: {still_open}")
+        tg(
+            f"*Drips Bot: Rotated {withdrawn} applications*\n"
+            f"Still active: {still_open} | Filling slots..."
+        )
 
-            log.info(f"Done: {success} applied, {fail} failed")
-            tg(
-                f"*Drips Fast Bot Done!*\n\n"
-                f"Applied: {success}\n"
-                f"Failed: {fail}\n"
-                f"Total tracked: {len(applied)}"
-            )
+    # ── Step 2: Fetch latest issues ───────────────────────────────────────────
+    free_slots = MAX_SLOTS - still_open
+    log.info(f"Free slots: {free_slots}")
 
-            # If we got 403s, token may be stale — refresh
-            if fail > success:
-                log.info("Too many failures — refreshing auth session...")
-                auth = get_auth_session()
+    if free_slots <= 0:
+        log.info("All 15 slots full — nothing to apply for this cycle")
+        log.info("=== Cycle end ===")
+        return auth, False
 
-        if not watch:
+    issues = fetch_latest_issues(auth, limit=100)
+    if not issues:
+        log.info("No issues returned — possible session issue")
+        return auth, True
+
+    # ── Step 3: Detect truly NEW issues (never seen before) ───────────────────
+    new_issues = []
+    other_issues = []
+
+    for issue in issues:
+        iid = issue.get("id")
+        if iid not in seen:
+            new_issues.append(issue)   # brand new drop
+        elif iid not in applied:
+            other_issues.append(issue) # seen before but not applied
+
+    # Update seen tracker
+    for issue in issues:
+        seen.add(issue.get("id"))
+    save_json(SEEN_FILE, seen)
+
+    if new_issues:
+        log.info(f"NEW issues just dropped: {len(new_issues)}")
+        tg(
+            f"*Drips Bot: {len(new_issues)} New Issues Dropped!*\n"
+            f"Applying immediately..."
+        )
+
+    # ── Step 4: Apply — new issues first, then fill with others ──────────────
+    priority_list = new_issues + other_issues  # new drops get priority
+    applied_count = 0
+    need_refresh  = False
+
+    for issue in priority_list:
+        if applied_count >= free_slots:
             break
 
-        log.info("Watching for new issues — sleeping 10 minutes...")
-        time.sleep(600)
+        iid = issue.get("id")
+        if iid in applied:
+            continue
+
+        result = apply(issue, auth)
+
+        if result == "ok":
+            applied.add(iid)
+            save_json(APPLIED_FILE, applied)
+            applied_count += 1
+            time.sleep(0.8)
+
+        elif result == "taken":
+            applied.add(iid)
+            save_json(APPLIED_FILE, applied)
+
+        elif result == "quota":
+            log.info("Quota reached — all 15 slots filled")
+            break
+
+        elif result == "expired":
+            log.warning("Session expired mid-apply")
+            need_refresh = True
+            break
+
+        else:
+            time.sleep(0.5)
+
+    log.info(f"Applied this cycle: {applied_count}")
+
+    if applied_count > 0:
+        tg(
+            f"*Drips Bot: Applied!*\n\n"
+            f"New applications: {applied_count}\n"
+            f"Slots used: {still_open + applied_count}/{MAX_SLOTS}"
+        )
+
+    log.info("=== Cycle end ===")
+    return auth, need_refresh
 
 # ─── ENTRY POINT ───────────────────────────────────────────────────────────────
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--watch", action="store_true",
-                        help="Keep running, check for new issues every 10 min")
+                        help="Loop every 5 min (use on PC — GitHub Actions uses schedule)")
     args = parser.parse_args()
-    apply_all(watch=args.watch)
+
+    log.info(f"Drips Smart Bot | Rotate after {ROTATE_HOURS}h | Slots: {MAX_SLOTS}")
+
+    auth = get_auth_session()
+    if not auth:
+        log.error("No session. Run: python bot.py --login --platform drips")
+        sys.exit(1)
+
+    tg(
+        f"*Drips Smart Bot Started*\n\n"
+        f"User: `{GITHUB_USERNAME}`\n"
+        f"Rotate: every {ROTATE_HOURS}h\n"
+        f"Slots: {MAX_SLOTS}"
+    )
+
+    while True:
+        # Refresh session if expired
+        if not session_valid(auth):
+            log.info("Session expired — refreshing...")
+            auth = get_auth_session()
+            if not auth:
+                log.error("Session refresh failed — waiting 5 min")
+                time.sleep(300)
+                continue
+
+        auth, need_refresh = run_cycle(auth)
+
+        if need_refresh:
+            log.info("Refreshing session after cycle...")
+            auth = get_auth_session()
+
+        if not args.watch:
+            break
+
+        log.info("Sleeping 5 minutes...")
+        time.sleep(300)
 
 if __name__ == "__main__":
     main()

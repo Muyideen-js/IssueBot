@@ -1,0 +1,79 @@
+name: Drips Smart Bot
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'   # every 5 minutes — catches new drops fast
+  workflow_dispatch:
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install playwright python-dotenv requests
+          python -m playwright install chromium --with-deps
+
+      - name: Restore session
+        uses: actions/cache@v4
+        with:
+          path: sessions/drips.json
+          key: drips-session-${{ github.run_id }}
+          restore-keys: drips-session-
+
+      - name: Restore seen tracker
+        uses: actions/cache@v4
+        with:
+          path: drips_seen.json
+          key: drips-seen-${{ github.run_id }}
+          restore-keys: drips-seen-
+
+      - name: Restore applied tracker
+        uses: actions/cache@v4
+        with:
+          path: drips_applied.json
+          key: drips-applied-${{ github.run_id }}
+          restore-keys: drips-applied-
+
+      - name: Run Drips Smart Bot
+        env:
+          GITHUB_USERNAME:    ${{ secrets.GH_USERNAME }}
+          GITHUB_PASSWORD:    ${{ secrets.GH_PASSWORD }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+          APPLICATION_TEXT:   ${{ secrets.APPLICATION_TEXT }}
+          ROTATE_HOURS:       "1"
+          MAX_SLOTS:          "15"
+          HEADLESS:           "true"
+        run: python drips_fast.py
+
+      - name: Save session
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: sessions/drips.json
+          key: drips-session-${{ github.run_id }}
+
+      - name: Save seen tracker
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: drips_seen.json
+          key: drips-seen-${{ github.run_id }}
+
+      - name: Save applied tracker
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: drips_applied.json
+          key: drips-applied-${{ github.run_id }}
