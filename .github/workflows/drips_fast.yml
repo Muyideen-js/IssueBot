@@ -44,6 +44,7 @@ jobs:
           echo '${{ secrets.DRIPS_SESSION }}' > sessions/drips.json
 
       - name: Run bot
+        continue-on-error: true
         env:
           GITHUB_USERNAME:    ${{ secrets.GH_USERNAME }}
           GITHUB_PASSWORD:    ${{ secrets.GH_PASSWORD }}
@@ -54,7 +55,11 @@ jobs:
           MAX_SLOTS:          "15"
           MAX_PER_REPO:       "2"
           HEADLESS:           "true"
-        run: python drips_fast.py
+        run: python drips_fast.py 2>&1
+
+      - name: Show bot log
+        if: always()
+        run: cat bot.log || echo "no log file found"
 
       - name: Save seen tracker
         uses: actions/cache/save@v4
