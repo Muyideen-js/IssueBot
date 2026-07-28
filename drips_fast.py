@@ -2,13 +2,14 @@
 """
 Drips Wave Smart Bot
 ====================
-- Watches for NEW issues dropped on Drips Wave
-- Applies IMMEDIATELY when a new issue appears
-- Withdraws applications pending > 1hr and reapplies to new ones
-- Keeps 15 slots always filled with the FRESHEST issues
+- Priority repos get applications first
+- Max 2 applications per repo
+- Gemini writes custom message per issue (fallback: "Hi, i can fix this")
+- Withdraws non-priority applications to make room for priority ones
+- Runs on GitHub Actions every 5 minutes
 
 Usage:
-  python drips_fast.py           # single run (for GitHub Actions)
+  python drips_fast.py           # single run (GitHub Actions)
   python drips_fast.py --watch   # loop every 5 min (local PC)
 """
 
@@ -19,6 +20,7 @@ import time
 import logging
 import argparse
 import requests
+import base64
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from dotenv import load_dotenv
@@ -31,22 +33,34 @@ WAVE_PROGRAM_ID  = "fdc01c95-806f-4b6a-998b-a6ed37e0d81b"
 WAVE_API         = "https://wave-api.drips.network/api"
 DRIPS_URL        = "https://www.drips.network/wave/stellar/issues"
 SESSION_FILE     = Path("sessions/drips.json")
-SEEN_FILE        = Path("drips_seen.json")       # all issue IDs we've ever seen
-APPLIED_FILE     = Path("drips_applied.json")    # issue IDs we applied to
+SEEN_FILE        = Path("drips_seen.json")
+APPLIED_FILE     = Path("drips_applied.json")
 
 GITHUB_USERNAME  = os.getenv("GITHUB_USERNAME", "")
 GITHUB_PASSWORD  = os.getenv("GITHUB_PASSWORD", "")
 TELEGRAM_TOKEN   = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+GEMINI_API_KEY   = os.getenv("GEMINI_API_KEY", "")
 HEADLESS         = os.getenv("HEADLESS", "true").lower() == "true"
-ROTATE_HOURS     = float(os.getenv("ROTATE_HOURS", "1"))    # withdraw after 1hr
+ROTATE_HOURS     = float(os.getenv("ROTATE_HOURS", "1"))
 MAX_SLOTS        = int(os.getenv("MAX_SLOTS", "15"))
+MAX_PER_REPO     = int(os.getenv("MAX_PER_REPO", "2"))
 
-APPLICATION_TEXT = os.getenv(
-    "APPLICATION_TEXT",
-    "Hi! I'm a full-stack developer with TypeScript and Stellar ecosystem experience. "
-    "I've reviewed this issue and can deliver a quality fix. Please assign this to me!"
-)
+FALLBACK_MESSAGE = "Hi, i can fix this"
+
+# ─── PRIORITY REPOS ────────────────────────────────────────────────────────────
+# These get applications first. Others withdrawn to make room.
+PRIORITY_REPOS = [
+    "Fluxora-Org/Fluxora-Backend",
+    "ancore-org/ancore",
+    "Talenttrust/Talenttrust-Contracts",
+    "Talenttrust/Talenttrust-Backend",
+    "Talenttrust/Talenttrust-Frontend",
+    "Akanimoh12/Stellar-iPredict",
+    "Chronopay-Org/ChronoPay-Backend",
+    "Stellabill/stellabill-contracts",
+    "enliven17/talos-stellar",
+]
 
 # ─── LOGGING ───────────────────────────────────────────────────────────────────
 class SafeHandler(logging.StreamHandler):
@@ -75,8 +89,54 @@ def tg(msg: str):
     except Exception as e:
         log.error(f"Telegram: {e}")
 
+# ─── GEMINI ────────────────────────────────────────────────────────────────────
+def gemini_message(issue_title: str, issue_body: str, repo: str) -> str:
+    """
+    Generate a custom application message using Gemini.
+    Falls back to default message if API fails or limit hit.
+    """
+    if not GEMINI_API_KEY:
+        return FALLBACK_MESSAGE
+
+    prompt = (
+        f"Write a short 2-sentence GitHub issue application message for this issue.\n"
+        f"Repo: {repo}\n"
+        f"Issue: {issue_title}\n"
+        f"Description: {(issue_body or '')[:300]}\n\n"
+        f"Rules:\n"
+        f"- Max 2 sentences\n"
+        f"- Sound like a confident developer\n"
+        f"- Mention one specific thing from the issue\n"
+        f"- End with asking to be assigned\n"
+        f"- Do NOT use emojis\n"
+        f"- Keep it under 50 words\n"
+        f"Return only the message, nothing else."
+    )
+
+    try:
+        r = requests.post(
+            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
+            params={"key": GEMINI_API_KEY},
+            json={"contents": [{"parts": [{"text": prompt}]}],
+                  "generationConfig": {"temperature": 0.3, "maxOutputTokens": 100}},
+            timeout=15
+        )
+        if r.status_code == 200:
+            text = r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+            log.info(f"Gemini message: {text[:60]}")
+            return text
+        elif r.status_code == 429:
+            log.warning("Gemini rate limit hit — using fallback message")
+            return FALLBACK_MESSAGE
+        else:
+            log.warning(f"Gemini {r.status_code} — using fallback")
+            return FALLBACK_MESSAGE
+    except Exception as e:
+        log.warning(f"Gemini error: {e} — using fallback")
+        return FALLBACK_MESSAGE
+
 # ─── STATE ─────────────────────────────────────────────────────────────────────
-def load_json(path: Path, default) -> set | list:
+def load_json(path: Path, default):
     if path.exists():
         try:
             data = json.loads(path.read_text())
@@ -86,7 +146,74 @@ def load_json(path: Path, default) -> set | list:
     return default
 
 def save_json(path: Path, data):
-    path.write_text(json.dumps(list(data) if isinstance(data, set) else data))
+    path.write_text(json.dumps(list(data) if isinstance(data, set) else data, indent=2))
+
+# ─── WAVE TOKEN ────────────────────────────────────────────────────────────────
+def extract_wave_token(session_file: Path) -> str:
+    """Extract wave_access_token from sessions/drips.json."""
+    try:
+        data = json.loads(session_file.read_text())
+        for c in (data.get("cookies") or []):
+            if c.get("name") == "wave_access_token":
+                return c.get("value", "")
+    except Exception as e:
+        log.error(f"extract_wave_token: {e}")
+    return ""
+
+def extract_refresh_token(session_file: Path) -> str:
+    """Extract wave_refresh_token from sessions/drips.json."""
+    try:
+        data = json.loads(session_file.read_text())
+        for c in (data.get("cookies") or []):
+            if c.get("name") == "wave_refresh_token":
+                return c.get("value", "")
+    except Exception as e:
+        log.error(f"extract_refresh_token: {e}")
+    return ""
+
+def refresh_access_token() -> str:
+    """
+    Use wave_refresh_token to get a new wave_access_token.
+    No browser needed — pure API call.
+    """
+    refresh_token = extract_refresh_token(SESSION_FILE)
+    if not refresh_token:
+        log.warning("No refresh token found")
+        return ""
+
+    try:
+        r = requests.post(
+            f"{WAVE_API}/auth/refresh",
+            json={"refreshToken": refresh_token},
+            headers={"content-type": "application/json"},
+            timeout=15
+        )
+        log.info(f"Token refresh: {r.status_code} — {r.text[:150]}")
+        if r.status_code == 200:
+            data = r.json()
+            new_token = data.get("accessToken") or data.get("access_token") or data.get("token") or ""
+            if new_token:
+                log.info("Got new access token!")
+                # Update session file with new token
+                update_session_token(new_token)
+                return new_token
+    except Exception as e:
+        log.error(f"refresh_access_token error: {e}")
+    return ""
+
+def update_session_token(new_token: str):
+    """Update wave_access_token in sessions/drips.json."""
+    try:
+        data = json.loads(SESSION_FILE.read_text())
+        now  = datetime.now(timezone.utc).timestamp()
+        for c in (data.get("cookies") or []):
+            if c.get("name") == "wave_access_token":
+                c["value"]   = new_token
+                c["expires"] = now + 900   # 15 min
+        SESSION_FILE.write_text(json.dumps(data))
+        log.info("Session file updated with new token")
+    except Exception as e:
+        log.error(f"update_session_token: {e}")
 
 # ─── HEADERS ───────────────────────────────────────────────────────────────────
 def make_headers(auth: dict) -> dict:
@@ -100,12 +227,47 @@ def make_headers(auth: dict) -> dict:
         ),
         "x-timezone": "Africa/Lagos",
     }
-    if auth.get("cookies"):    h["cookie"]              = auth["cookies"]
-    if auth.get("turnstile"):  h["x-turnstile-token"]   = auth["turnstile"]
-    if auth.get("wave_token"): h["authorization"]        = auth["wave_token"]
+    if auth.get("cookies"):   h["cookie"]            = auth["cookies"]
+    if auth.get("turnstile"): h["x-turnstile-token"] = auth["turnstile"]
+    token = auth.get("wave_token") or extract_wave_token(SESSION_FILE)
+    if token:
+        h["authorization"] = f"Bearer {token}"
     return h
 
 # ─── SESSION ───────────────────────────────────────────────────────────────────
+def token_expires_in(token: str) -> float:
+    """Return seconds until token expires. Negative = already expired."""
+    try:
+        parts = token.split(".")
+        if len(parts) == 3:
+            padding = 4 - len(parts[1]) % 4
+            payload = json.loads(base64.b64decode(parts[1] + "=" * padding))
+            exp = payload.get("exp", 0)
+            return exp - datetime.now(timezone.utc).timestamp()
+    except Exception:
+        pass
+    return -1
+
+def get_valid_token() -> str:
+    """Get a valid wave_access_token, refreshing if needed."""
+    token = extract_wave_token(SESSION_FILE)
+    if token:
+        expires_in = token_expires_in(token)
+        log.info(f"Token expires in: {expires_in/60:.1f} min")
+        if expires_in > 60:   # still valid
+            return token
+        log.info("Token expiring soon — refreshing...")
+
+    # Try refresh token first (no browser needed)
+    new_token = refresh_access_token()
+    if new_token:
+        return new_token
+
+    # Last resort — open browser
+    log.info("Refresh failed — opening browser...")
+    auth = get_auth_session()
+    return auth.get("wave_token") or extract_wave_token(SESSION_FILE)
+
 def session_valid(auth: dict) -> bool:
     try:
         r = requests.get(
@@ -113,12 +275,14 @@ def session_valid(auth: dict) -> bool:
             headers=make_headers(auth),
             timeout=10
         )
+        log.info(f"Session check: {r.status_code}")
         return r.status_code == 200
     except Exception:
         return False
 
+# ─── BROWSER SESSION ───────────────────────────────────────────────────────────
 def get_auth_session() -> dict:
-    log.info("Opening browser to grab session...")
+    log.info("Opening browser...")
     captured = {"cookies": None, "turnstile": None, "wave_token": None}
 
     with sync_playwright() as pw:
@@ -145,7 +309,7 @@ def get_auth_session() -> dict:
             if "wave-api.drips.network" in req.url:
                 h = req.headers
                 t = h.get("x-turnstile-token")
-                w = h.get("authorization")
+                w = h.get("authorization", "").replace("Bearer ", "")
                 if t: turnstile_tokens.append(t)
                 if w: wave_tokens.append(w)
 
@@ -163,7 +327,6 @@ def get_auth_session() -> dict:
             browser.close()
             return {}
 
-        # Navigate to first issue to trigger API calls
         first_link = page.query_selector("a[href*='/issues/']")
         if first_link:
             href = first_link.get_attribute("href") or ""
@@ -174,7 +337,6 @@ def get_auth_session() -> dict:
                 pass
             page.wait_for_timeout(3000)
 
-            # Try clicking Apply to get turnstile token
             page.evaluate("""
                 () => {
                     const btn = Array.from(document.querySelectorAll('button'))
@@ -202,44 +364,57 @@ def get_auth_session() -> dict:
         ctx.storage_state(path=str(SESSION_FILE))
         browser.close()
 
-    log.info(f"Session | Cookies: {'yes' if captured['cookies'] else 'no'} | Turnstile: {'yes' if captured['turnstile'] else 'no'}")
+    log.info(f"Session | Turnstile: {'yes' if captured['turnstile'] else 'no'}")
     return captured
 
+# ─── REPO HELPERS ──────────────────────────────────────────────────────────────
+def get_repo(issue: dict) -> str:
+    """Extract owner/repo from issue data."""
+    repo = issue.get("repo") or issue.get("repository") or ""
+    if isinstance(repo, dict):
+        return repo.get("fullName") or repo.get("full_name") or ""
+    gh_url = issue.get("gitHubIssueUrl") or issue.get("htmlUrl") or ""
+    if "github.com" in gh_url:
+        parts = gh_url.replace("https://github.com/", "").split("/")
+        if len(parts) >= 2:
+            return f"{parts[0]}/{parts[1]}"
+    return repo
+
+def is_priority(issue: dict) -> bool:
+    repo = get_repo(issue).lower()
+    return any(p.lower() in repo or repo in p.lower() for p in PRIORITY_REPOS)
+
 # ─── FETCH ISSUES ──────────────────────────────────────────────────────────────
-def fetch_latest_issues(auth: dict, limit: int = 100) -> list[dict]:
-    """
-    Fetch the most recently updated open issues.
-    Sorted by updatedAt so newest drops appear first.
-    """
+def fetch_latest_issues(auth: dict) -> list[dict]:
     headers = make_headers(auth)
     issues  = []
     seen    = set()
 
     url = (
-        f"{WAVE_API}/issues"
-        f"?limit={limit}&offset=0"
+        f"{WAVE_API}/issues?limit=100&offset=0"
         f"&waveProgramId={WAVE_PROGRAM_ID}"
         f"&state=open&sortBy=updatedAt"
     )
     try:
         r = requests.get(url, headers=headers, timeout=30)
-        if r.status_code == 401:
-            log.warning("Session expired")
+        log.info(f"Issues fetch: {r.status_code}")
+        if r.status_code in (401, 403):
             return []
         data  = r.json()
         batch = data.get("data") or []
         pagination = data.get("pagination") or {}
         total = pagination.get("total") or 0
-        log.info(f"Total open issues on platform: {total}")
+        log.info(f"Total open issues: {total}")
 
         for issue in batch:
             iid = issue.get("id")
-            if iid and iid not in seen:
+            accepted = issue.get("acceptedApplicationsCount") or 0
+            if iid and iid not in seen and accepted == 0:
                 seen.add(iid)
                 issues.append(issue)
 
     except Exception as e:
-        log.error(f"fetch_latest_issues error: {e}")
+        log.error(f"fetch_latest_issues: {e}")
 
     return issues
 
@@ -252,14 +427,14 @@ def fetch_my_applications(auth: dict) -> list[dict]:
     ]:
         try:
             r = requests.get(url, headers=headers, timeout=30)
-            log.info(f"My apps [{r.status_code}]: {r.text[:150]}")
+            log.info(f"My apps [{r.status_code}]: {r.text[:100]}")
             if r.status_code == 200:
                 d = r.json()
                 result = d if isinstance(d, list) else (d.get("data") or d.get("applications") or [])
-                if result:
+                if isinstance(result, list):
                     return result
         except Exception as e:
-            log.error(f"fetch_my_applications error: {e}")
+            log.error(f"fetch_my_applications: {e}")
     return []
 
 # ─── WITHDRAW ──────────────────────────────────────────────────────────────────
@@ -270,7 +445,6 @@ def withdraw(app: dict, auth: dict) -> bool:
     title    = issue.get("title") or "Unknown"
 
     if not app_id or not issue_id:
-        log.warning(f"Cannot withdraw — missing fields: {list(app.keys())}")
         return False
 
     url = f"{WAVE_API}/wave-programs/{WAVE_PROGRAM_ID}/issues/{issue_id}/applications/{app_id}"
@@ -286,38 +460,44 @@ def withdraw(app: dict, auth: dict) -> bool:
         return False
 
 # ─── APPLY ─────────────────────────────────────────────────────────────────────
-def apply(issue: dict, auth: dict) -> str:
+def apply_for_issue(issue: dict, auth: dict) -> str:
     """Returns: ok | taken | quota | expired | error"""
     issue_id = issue.get("id")
     title    = issue.get("title", "")
+    body     = issue.get("body", "")
+    repo     = get_repo(issue)
+
+    # Generate application message
+    msg = gemini_message(title, body, repo)
 
     url = f"{WAVE_API}/wave-programs/{WAVE_PROGRAM_ID}/issues/{issue_id}/applications"
     try:
         r = requests.post(
             url,
             headers=make_headers(auth),
-            json={"applicationText": APPLICATION_TEXT},
+            json={"applicationText": msg},
             timeout=15
         )
 
         if r.status_code == 201:
-            log.info(f"Applied: {title[:70]}")
+            priority_tag = " [PRIORITY]" if is_priority(issue) else ""
+            log.info(f"Applied{priority_tag}: {title[:60]}")
             return "ok"
 
         err = ""
-        try: err = r.json().get("error", "")
-        except Exception: err = r.text[:100]
+        try:    err = r.json().get("error", "")
+        except: err = r.text[:100]
 
         if r.status_code == 400:
-            if "accepted application" in err:    return "taken"
-            if "already applied" in err.lower(): return "taken"
+            if "accepted application" in err:          return "taken"
+            if "already applied" in err.lower():       return "taken"
             if "quota" in err.lower() or "at most" in err.lower():
                 log.warning(f"QUOTA FULL: {err}")
                 return "quota"
             log.warning(f"400: {err[:80]}")
             return "error"
 
-        if r.status_code == 401: return "expired"
+        if r.status_code in (401, 403): return "expired"
         if r.status_code == 429:
             time.sleep(5)
             return "error"
@@ -331,115 +511,160 @@ def apply(issue: dict, auth: dict) -> str:
 
 # ─── MAIN CYCLE ────────────────────────────────────────────────────────────────
 def run_cycle(auth: dict) -> tuple[dict, bool]:
-    """
-    One cycle:
-    1. Fetch my current applications
-    2. Withdraw ones pending > ROTATE_HOURS
-    3. Fetch latest issues
-    4. Apply to NEW issues (ones we haven't seen before) first
-    5. Fill remaining slots with any available issues
-
-    Returns (auth, needs_session_refresh)
-    """
     log.info("=== Cycle start ===")
-    now_utc  = datetime.now(timezone.utc)
-    seen     = load_json(SEEN_FILE, set())
-    applied  = load_json(APPLIED_FILE, set())
+    now_utc = datetime.now(timezone.utc)
 
-    # ── Step 1: Check my applications ────────────────────────────────────────
+    seen    = load_json(SEEN_FILE, set())
+    applied = load_json(APPLIED_FILE, set())
+
+    # ── Step 1: Refresh token if needed ──────────────────────────────────────
+    token = get_valid_token()
+    if token:
+        auth["wave_token"] = token
+
+    # ── Step 2: Fetch my current applications ────────────────────────────────
     my_apps = fetch_my_applications(auth)
     log.info(f"Active applications: {len(my_apps)}")
 
-    withdrawn  = 0
-    still_open = 0
-    withdrawn_issue_ids = set()
-
+    # Count per repo
+    repo_counts: dict[str, int] = {}
     for app in my_apps:
+        repo = get_repo(app.get("issue") or app)
+        repo_counts[repo] = repo_counts.get(repo, 0) + 1
+
+    # ── Step 3: Fetch latest issues ──────────────────────────────────────────
+    issues = fetch_latest_issues(auth)
+    if not issues:
+        log.info("No issues returned")
+        return auth, True
+
+    # Separate new drops vs seen before
+    new_drops   = [i for i in issues if i.get("id") not in seen]
+    other       = [i for i in issues if i.get("id") in seen and i.get("id") not in applied]
+
+    # Update seen
+    for i in issues:
+        seen.add(i.get("id"))
+    save_json(SEEN_FILE, seen)
+
+    if new_drops:
+        priority_new = [i for i in new_drops if is_priority(i)]
+        log.info(f"New drops: {len(new_drops)} ({len(priority_new)} priority)")
+        if priority_new:
+            tg(f"*{len(priority_new)} Priority Issues Dropped!*\nApplying immediately...")
+
+    # ── Step 4: Check if priority issues need slots freed ────────────────────
+    priority_issues = [i for i in (new_drops + other) if is_priority(i) and i.get("id") not in applied]
+
+    if priority_issues:
+        # Count how many priority slots we need
+        priority_need = min(len(priority_issues), MAX_SLOTS)
+        current_priority = sum(1 for app in my_apps if is_priority(app.get("issue") or app))
+        current_non_priority = len(my_apps) - current_priority
+        free_slots = MAX_SLOTS - len(my_apps)
+        slots_needed = priority_need - free_slots
+
+        if slots_needed > 0 and current_non_priority > 0:
+            # Withdraw non-priority apps (oldest first) to make room
+            non_priority_apps = [
+                app for app in my_apps
+                if not is_priority(app.get("issue") or app)
+            ]
+            # Sort by oldest first
+            non_priority_apps.sort(key=lambda a: a.get("appliedAt") or "")
+
+            withdrawn = 0
+            for app in non_priority_apps:
+                if withdrawn >= slots_needed:
+                    break
+                issue    = app.get("issue") or {}
+                issue_id = app.get("issueId") or issue.get("id")
+                if withdraw(app, auth):
+                    withdrawn += 1
+                    if issue_id:
+                        applied.discard(issue_id)
+                    # Update repo counts
+                    repo = get_repo(issue)
+                    repo_counts[repo] = max(0, repo_counts.get(repo, 1) - 1)
+                    time.sleep(0.3)
+
+            if withdrawn:
+                save_json(APPLIED_FILE, applied)
+                my_apps = [a for a in my_apps if a not in non_priority_apps[:withdrawn]]
+                log.info(f"Freed {withdrawn} slots for priority issues")
+
+    # ── Step 5: Also rotate stale applications (> ROTATE_HOURS) ─────────────
+    withdrawn_stale = 0
+    for app in list(my_apps):
         applied_at_str = app.get("appliedAt") or app.get("createdAt") or ""
         try:
             applied_at = datetime.fromisoformat(applied_at_str.replace("Z", "+00:00"))
             age_hours  = (now_utc - applied_at).total_seconds() / 3600
         except Exception:
-            age_hours  = 0
+            age_hours = 0
 
         if age_hours >= ROTATE_HOURS:
             issue    = app.get("issue") or {}
             issue_id = app.get("issueId") or issue.get("id")
-            log.info(f"Withdrawing ({age_hours:.1f}h old): {issue.get('title','')[:50]}")
             if withdraw(app, auth):
-                withdrawn += 1
+                withdrawn_stale += 1
                 if issue_id:
-                    withdrawn_issue_ids.add(issue_id)
-                    # Remove from applied so we can reapply if still open
                     applied.discard(issue_id)
-            time.sleep(0.5)
-        else:
-            still_open += 1
+                repo = get_repo(issue)
+                repo_counts[repo] = max(0, repo_counts.get(repo, 1) - 1)
+                time.sleep(0.3)
 
-    if withdrawn > 0:
+    if withdrawn_stale:
         save_json(APPLIED_FILE, applied)
-        log.info(f"Withdrawn: {withdrawn} | Still active: {still_open}")
-        tg(
-            f"*Drips Bot: Rotated {withdrawn} applications*\n"
-            f"Still active: {still_open} | Filling slots..."
-        )
+        log.info(f"Rotated {withdrawn_stale} stale applications (>{ROTATE_HOURS}h)")
 
-    # ── Step 2: Fetch latest issues ───────────────────────────────────────────
-    free_slots = MAX_SLOTS - still_open
-    log.info(f"Free slots: {free_slots}")
+    # ── Step 6: Apply — priority first, then others ──────────────────────────
+    # Refresh my_apps count after withdrawals
+    remaining_apps = fetch_my_applications(auth)
+    free_slots = MAX_SLOTS - len(remaining_apps)
+    log.info(f"Free slots after rotation: {free_slots}")
 
     if free_slots <= 0:
-        log.info("All 15 slots full — nothing to apply for this cycle")
+        log.info("All slots full")
         log.info("=== Cycle end ===")
         return auth, False
 
-    issues = fetch_latest_issues(auth, limit=100)
-    if not issues:
-        log.info("No issues returned — possible session issue")
-        return auth, True
+    # Build apply list: priority new drops first, then priority seen, then others
+    priority_new   = [i for i in new_drops if is_priority(i) and i.get("id") not in applied]
+    priority_other = [i for i in other    if is_priority(i) and i.get("id") not in applied]
+    normal_new     = [i for i in new_drops if not is_priority(i) and i.get("id") not in applied]
+    normal_other   = [i for i in other    if not is_priority(i) and i.get("id") not in applied]
 
-    # ── Step 3: Detect truly NEW issues (never seen before) ───────────────────
-    new_issues = []
-    other_issues = []
+    apply_order = priority_new + priority_other + normal_new + normal_other
 
-    for issue in issues:
-        iid = issue.get("id")
-        if iid not in seen:
-            new_issues.append(issue)   # brand new drop
-        elif iid not in applied:
-            other_issues.append(issue) # seen before but not applied
-
-    # Update seen tracker
-    for issue in issues:
-        seen.add(issue.get("id"))
-    save_json(SEEN_FILE, seen)
-
-    if new_issues:
-        log.info(f"NEW issues just dropped: {len(new_issues)}")
-        tg(
-            f"*Drips Bot: {len(new_issues)} New Issues Dropped!*\n"
-            f"Applying immediately..."
-        )
-
-    # ── Step 4: Apply — new issues first, then fill with others ──────────────
-    priority_list = new_issues + other_issues  # new drops get priority
     applied_count = 0
     need_refresh  = False
 
-    for issue in priority_list:
+    # Track per-repo counts for this cycle
+    cycle_repo_counts: dict[str, int] = {}
+    for app in remaining_apps:
+        repo = get_repo(app.get("issue") or app)
+        cycle_repo_counts[repo] = cycle_repo_counts.get(repo, 0) + 1
+
+    for issue in apply_order:
         if applied_count >= free_slots:
             break
 
-        iid = issue.get("id")
-        if iid in applied:
+        iid  = issue.get("id")
+        repo = get_repo(issue)
+
+        # Max 2 per repo
+        if cycle_repo_counts.get(repo, 0) >= MAX_PER_REPO:
+            log.info(f"Skipping (max {MAX_PER_REPO}/repo reached): {repo}")
             continue
 
-        result = apply(issue, auth)
+        result = apply_for_issue(issue, auth)
 
         if result == "ok":
             applied.add(iid)
             save_json(APPLIED_FILE, applied)
             applied_count += 1
+            cycle_repo_counts[repo] = cycle_repo_counts.get(repo, 0) + 1
             time.sleep(0.8)
 
         elif result == "taken":
@@ -447,11 +672,10 @@ def run_cycle(auth: dict) -> tuple[dict, bool]:
             save_json(APPLIED_FILE, applied)
 
         elif result == "quota":
-            log.info("Quota reached — all 15 slots filled")
+            log.info("Quota reached — slots full")
             break
 
         elif result == "expired":
-            log.warning("Session expired mid-apply")
             need_refresh = True
             break
 
@@ -459,12 +683,10 @@ def run_cycle(auth: dict) -> tuple[dict, bool]:
             time.sleep(0.5)
 
     log.info(f"Applied this cycle: {applied_count}")
-
     if applied_count > 0:
         tg(
-            f"*Drips Bot: Applied!*\n\n"
-            f"New applications: {applied_count}\n"
-            f"Slots used: {still_open + applied_count}/{MAX_SLOTS}"
+            f"*Drips Bot: {applied_count} Applied*\n"
+            f"Slots used: {len(remaining_apps) + applied_count}/{MAX_SLOTS}"
         )
 
     log.info("=== Cycle end ===")
@@ -474,38 +696,53 @@ def run_cycle(auth: dict) -> tuple[dict, bool]:
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--watch", action="store_true",
-                        help="Loop every 5 min (use on PC — GitHub Actions uses schedule)")
+                        help="Loop every 5 min (local PC). GitHub Actions uses schedule.")
     args = parser.parse_args()
 
-    log.info(f"Drips Smart Bot | Rotate after {ROTATE_HOURS}h | Slots: {MAX_SLOTS}")
+    log.info(f"Drips Smart Bot | Priority repos: {len(PRIORITY_REPOS)} | Max/repo: {MAX_PER_REPO}")
 
-    auth = get_auth_session()
+    auth = {}
+
+    # Try to use existing session first (no browser)
+    token = get_valid_token()
+    if token:
+        auth["wave_token"] = token
+        if session_valid(auth):
+            log.info("Using existing session — no browser needed")
+        else:
+            auth = get_auth_session()
+    else:
+        auth = get_auth_session()
+
     if not auth:
         log.error("No session. Run: python bot.py --login --platform drips")
         sys.exit(1)
 
     tg(
         f"*Drips Smart Bot Started*\n\n"
-        f"User: `{GITHUB_USERNAME}`\n"
-        f"Rotate: every {ROTATE_HOURS}h\n"
-        f"Slots: {MAX_SLOTS}"
+        f"Priority repos: {len(PRIORITY_REPOS)}\n"
+        f"Max per repo: {MAX_PER_REPO}\n"
+        f"Rotate after: {ROTATE_HOURS}h\n"
+        f"Gemini: {'enabled' if GEMINI_API_KEY else 'disabled (fallback)'}"
     )
 
     while True:
-        # Refresh session if expired
         if not session_valid(auth):
-            log.info("Session expired — refreshing...")
-            auth = get_auth_session()
-            if not auth:
-                log.error("Session refresh failed — waiting 5 min")
-                time.sleep(300)
-                continue
+            log.info("Session invalid — refreshing...")
+            token = get_valid_token()
+            if token:
+                auth["wave_token"] = token
+            else:
+                auth = get_auth_session()
 
         auth, need_refresh = run_cycle(auth)
 
         if need_refresh:
-            log.info("Refreshing session after cycle...")
-            auth = get_auth_session()
+            token = get_valid_token()
+            if token:
+                auth["wave_token"] = token
+            else:
+                auth = get_auth_session()
 
         if not args.watch:
             break
