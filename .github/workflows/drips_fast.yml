@@ -2,7 +2,7 @@ name: Drips Smart Bot
 
 on:
   schedule:
-    - cron: '*/5 * * * *'   # every 5 minutes
+    - cron: '*/5 * * * *'
   workflow_dispatch:
 
 jobs:
@@ -38,10 +38,20 @@ jobs:
           key: drips-applied-${{ github.run_id }}
           restore-keys: drips-applied-
 
+      - name: Restore priority list
+        uses: actions/cache@v4
+        with:
+          path: drips_priority.json
+          key: drips-priority-${{ github.run_id }}
+          restore-keys: drips-priority-
+
       - name: Write session from secret
+        env:
+          DRIPS_SESSION: ${{ secrets.DRIPS_SESSION }}
         run: |
           mkdir -p sessions
-          echo '${{ secrets.DRIPS_SESSION }}' > sessions/drips.json
+          echo "$DRIPS_SESSION" > sessions/drips.json
+          echo "Session size: $(wc -c < sessions/drips.json) bytes"
 
       - name: Run bot
         continue-on-error: true
@@ -59,7 +69,7 @@ jobs:
 
       - name: Show bot log
         if: always()
-        run: cat bot.log || echo "no log file found"
+        run: cat bot.log || echo "no log file"
 
       - name: Save seen tracker
         uses: actions/cache/save@v4
@@ -74,6 +84,13 @@ jobs:
         with:
           path: drips_applied.json
           key: drips-applied-${{ github.run_id }}
+
+      - name: Save priority list
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: drips_priority.json
+          key: drips-priority-${{ github.run_id }}
 
       - name: Update session secret
         if: always()
