@@ -52,6 +52,16 @@ jobs:
           mkdir -p sessions
           echo "$DRIPS_SESSION" > sessions/drips.json
           echo "Session size: $(wc -c < sessions/drips.json) bytes"
+          python -c "
+          import json
+          d = json.load(open('sessions/drips.json'))
+          wave = [c for c in d.get('cookies',[]) if 'wave' in c.get('name','')]
+          for c in wave:
+              import datetime
+              exp = c.get('expires', 0)
+              remaining = exp - datetime.datetime.now().timestamp()
+              print(f\"{c['name']}: expires in {remaining/60:.0f} min\")
+          "
 
       - name: Run bot
         continue-on-error: true
@@ -61,7 +71,7 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
           GEMINI_API_KEY:     ${{ secrets.GEMINI_API_KEY }}
-          ROTATE_HOURS:       "1"
+          ROTATE_HOURS:       "0.5"
           MAX_SLOTS:          "15"
           MAX_PER_REPO:       "2"
           HEADLESS:           "true"

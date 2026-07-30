@@ -33,7 +33,7 @@ TELEGRAM_TOKEN   = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 GEMINI_API_KEY   = os.getenv("GEMINI_API_KEY", "")
 HEADLESS         = os.getenv("HEADLESS", "true").lower() == "true"
-ROTATE_HOURS     = float(os.getenv("ROTATE_HOURS", "1"))
+ROTATE_HOURS     = float(os.getenv("ROTATE_HOURS", "0.5"))
 MAX_SLOTS        = int(os.getenv("MAX_SLOTS", "15"))
 MAX_PER_REPO     = int(os.getenv("MAX_PER_REPO", "2"))
 FALLBACK_MSG     = "Hi, i can fix this"
@@ -229,7 +229,7 @@ def hdrs(token: str = "") -> dict:
 
 # ─── BROWSER SESSION ───────────────────────────────────────────────────────────
 def get_browser_session() -> str:
-    """Open browser, load Drips, capture fresh token."""
+    """Open browser, refresh session cookies and extract wave token."""
     log.info("Opening browser for fresh session...")
     token = ""
 
@@ -247,23 +247,72 @@ def get_browser_session() -> str:
         def on_req(req):
             if "wave-api.drips.network" in req.url:
                 w = req.headers.get("authorization", "").replace("Bearer ", "")
-                if w: tokens.append(w)
+                if w and len(w) > 20: tokens.append(w)
 
         page.on("request", on_req)
+
+        # Load main page first
         try:
             page.goto(DRIPS_URL, wait_until="networkidle", timeout=60000)
         except PWTimeout:
             pass
-        page.wait_for_timeout(4000)
+        page.wait_for_timeout(3000)
 
-        if tokens:
-            token = tokens[-1]
+        # Check if logged in
+        body = page.inner_text("body").lower()
+        if "log in" in body or "sign in" in body:
+            log.error("Not logged in! Run: python bot.py --login --platform drips")
+            browser.close()
+            return ""
 
+        # Navigate to a specific issue to trigger auth API calls
+        # Use a known issue URL format
+        issue_links = page.query_selector_all("a[href*='/wave/stellar/issues/']")
+        if issue_links:
+            href = issue_links[0].get_attribute("href") or ""
+            issue_url = href if href.startswith("http") else f"https://www.drips.network{href}"
+            log.info(f"Navigating to issue: {issue_url}")
+            try:
+                page.goto(issue_url, wait_until="networkidle", timeout=30000)
+                page.wait_for_timeout(3000)
+            except PWTimeout:
+                pass
+
+        # Save refreshed session
         SESSION_FILE.parent.mkdir(exist_ok=True)
         ctx.storage_state(path=str(SESSION_FILE))
+
+        # Extract token from cookies
+        if tokens:
+            token = tokens[-1]
+            # Also save to session file
+            try:
+                sess = json.loads(SESSION_FILE.read_text())
+                now  = datetime.now(timezone.utc).timestamp()
+                found = False
+                for c in (sess.get("cookies") or []):
+                    if c.get("name") == "wave_access_token":
+                        c["value"]   = token
+                        c["expires"] = now + 900
+                        found = True
+                if not found:
+                    (sess.setdefault("cookies", [])).append({
+                        "name": "wave_access_token", "value": token,
+                        "domain": ".drips.network", "path": "/",
+                        "expires": now + 900, "httpOnly": False,
+                        "secure": True, "sameSite": "Lax"
+                    })
+                SESSION_FILE.write_text(json.dumps(sess))
+            except Exception as e:
+                log.error(f"Could not update session: {e}")
+        else:
+            # No token from requests, try reading from cookies
+            token = get_cookie_value("wave_access_token")
+            log.info(f"No token from requests, reading from cookies: {'found' if token else 'not found'}")
+
         browser.close()
 
-    log.info(f"Browser session: token={'yes' if token else 'no'}")
+    log.info(f"Browser session done: token={'yes' if token else 'no'}")
     return token
 
 # ─── REPO HELPER ───────────────────────────────────────────────────────────────
@@ -431,7 +480,7 @@ def run_cycle():
         repo  = get_repo(issue)
         if repo:
             add_to_priority(repo)
-            priority = load_priority()
+    priority = load_priority()
 
     # ── Fetch my active applications ─────────────────────────────────────────
     my_apps = fetch_my_apps(token)
@@ -495,6 +544,9 @@ def run_cycle():
     applied_count = 0
     log.info(f"Free slots: {free_slots}")
 
+    # Count repos that still have slots available
+    skipped_repos = set()
+
     for issue in apply_order:
         if applied_count >= free_slots:
             log.info(f"All {MAX_SLOTS} slots filled")
@@ -503,8 +555,9 @@ def run_cycle():
         iid  = issue.get("id")
         repo = get_repo(issue)
 
-        # Max 2 per repo
+        # Max 2 per repo — skip but continue to next repo
         if repo_counts.get(repo, 0) >= MAX_PER_REPO:
+            skipped_repos.add(repo)
             continue
 
         result = apply_issue(issue, token)
