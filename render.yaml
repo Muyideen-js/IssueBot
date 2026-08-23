@@ -12,12 +12,14 @@ envVarGroups:
 
 databases:
   - name: issuebot-db
+    region: frankfurt
     plan: basic-256mb
     ipAllowList: []
 
 services:
   - type: web
     name: issuebot-web
+    region: frankfurt
     runtime: python
     plan: starter
     buildCommand: pip install -r requirements.txt
@@ -34,6 +36,7 @@ services:
 
   - type: worker
     name: issuebot-worker
+    region: frankfurt
     runtime: python
     plan: starter
     buildCommand: pip install -r requirements.txt
