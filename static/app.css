@@ -51,6 +51,7 @@ th { background:#f8fafc; color:var(--muted); font-size:10px; font-weight:650; le
 .reset-form { display:flex; align-items:center; gap:6px; }.reset-form input { width:175px; }
 .checkbox { display:flex; grid-template-columns:none; flex-direction:row; align-items:center; gap:8px; }.checkbox input { width:15px; min-height:15px; accent-color:var(--blue); }
 details { border-top:1px solid var(--line); padding-top:12px; } summary { color:#344054; font-size:12px; font-weight:580; cursor:pointer; }
+.credential-row { display:grid; gap:8px; padding:12px 0; border-top:1px solid var(--line); }.credential-row:first-of-type { border-top:0; padding-top:0; }
 .auth-shell { width:min(880px,calc(100% - 32px)); min-height:100vh; margin:0 auto; display:grid; place-items:center; }
 .auth-frame { width:100%; display:grid; grid-template-columns:minmax(240px,.8fr) minmax(340px,1fr); background:var(--surface); border:1px solid var(--line); }
 .auth-intro { padding:34px; background:var(--blue); color:white; display:flex; flex-direction:column; justify-content:space-between; min-height:390px; }.auth-intro .brand { color:white; }.auth-intro .brand-mark { background:white; color:var(--blue); }

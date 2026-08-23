@@ -1,6 +1,6 @@
 # IssueBot Private Portal
 
-IssueBot is a private, multi-user Drips Wave assistant with two separate sites. The owner manages accounts in an admin-only panel. Each normal user gets a separate portal where they connect Drips, monitor activity, review issue candidates, and explicitly approve applications.
+IssueBot is a private, multi-user Drips Wave automation portal with two separate sites. The owner manages accounts in an admin-only panel. Each normal user connects their own Drips session and optional AI API keys; the worker then fills and rotates that user's application slots automatically.
 
 The server source can remain in a private repository. Users receive only the hosted website and the optional compiled connector. Browser-delivered HTML/CSS is inherently visible, and compiled programs can be reverse-engineered, so client-side distribution cannot provide absolute source secrecy.
 
@@ -8,9 +8,9 @@ The server source can remain in a private repository. Users receive only the hos
 
 ```text
 Admin panel        create, disable, reset, and delete user accounts
-User portal        setup, candidates, applications, and on-site activity
+User portal        Drips, AI writer, fallback, priorities, and activity
 PostgreSQL         users, encrypted Drips sessions, issues, and activity
-Background worker scans Drips separately for every enabled user
+Background worker scans and applies separately for every enabled user
 User connector     imports a Drips session using a one-time code
 ```
 
@@ -32,7 +32,9 @@ User connector     imports a Drips session using a one-time code
 - All state-changing browser forms use CSRF protection.
 - Login attempts are throttled.
 - The service does not collect GitHub passwords.
-- Monitoring only creates a private candidate queue. A user must review scope and explicitly approve each application.
+- Drips sessions and Gemini, DeepSeek, and OpenAI API keys are encrypted at rest.
+- Saved secrets are never returned to the browser after submission.
+- Each user explicitly enables or pauses automatic applications for their own account.
 
 Each participant must use their own Drips account and KYC identity. Account sharing is prohibited by the [Drips Wave terms](https://docs.drips.network/wave/terms-and-rules/).
 
@@ -63,9 +65,13 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 2. Open **Setup**.
 3. Generate a one-time Drips connection code.
 4. Run the compiled IssueBot Connector, enter the website URL and code, then log in to Drips in the browser window it opens.
-5. Enable monitoring.
-6. Watch scans, new candidates, accepted assignments, applications, and errors in the dashboard Activity feed.
-7. Review candidates, edit the proposed message, and click **Approve and apply**.
+5. Optionally connect Gemini, DeepSeek, and OpenAI keys and choose the preferred provider. IssueBot tries the other connected providers if the preferred provider fails.
+6. Set a fallback message, slot limit, two-per-repository limit, 30-minute rotation, and priority repositories.
+7. Enable automatic applications and watch applications, withdrawals, assignments, and errors in the Activity feed.
+
+The worker prioritizes configured repository owners or exact `owner/repository` names. When all slots are full, a new priority issue can replace the oldest non-priority application. Pending applications older than the configured rotation period are withdrawn. When an application is accepted, that exact repository is added to the user's priority list automatically.
+
+If no AI key is connected, or every connected provider fails or reaches quota, IssueBot uses the user's fallback message. The default is `Hi, I can fix this`.
 
 Connection codes expire after 15 minutes and can only be used once. The connector does not save the Drips session locally.
 
@@ -88,6 +94,8 @@ This free setup is suitable for testing, not dependable 24/7 monitoring: the Ren
 
 Render generates `APP_SECRET`. The connected repository should remain private. Official references: [Blueprint specification](https://render.com/docs/blueprint-spec), [background workers](https://render.com/docs/background-workers).
 
-## Current limitation
+## Current limitations
 
 The Drips Wave contributor API is not documented as a stable third-party API. The worker uses the API behavior observed by the existing bot, so Drips frontend/API changes may require maintenance. When a Drips refresh session expires, the user must reconnect with a new one-time code.
+
+Automatic applications must comply with the user's Drips Wave account rules and any repository-specific contribution requirements. Provider usage and charges belong to the API key owner.

@@ -40,6 +40,7 @@ def init_db() -> None:
         try:
             Base.metadata.create_all(engine)
             _remove_legacy_telegram_columns()
+            _add_automation_columns()
             return
         except (OperationalError, ProgrammingError) as exc:
             message = str(exc).lower()
@@ -68,3 +69,40 @@ def _remove_legacy_telegram_columns() -> None:
             message = str(exc).lower()
             if "no such column" not in message and "does not exist" not in message:
                 raise
+
+
+def _add_automation_columns() -> None:
+    """Upgrade existing installations without requiring a migration service."""
+    inspector = inspect(engine)
+    table_names = inspector.get_table_names()
+    additions = {
+        "bot_settings": {
+            "gemini_api_key_encrypted": "TEXT NOT NULL DEFAULT ''",
+            "deepseek_api_key_encrypted": "TEXT NOT NULL DEFAULT ''",
+            "openai_api_key_encrypted": "TEXT NOT NULL DEFAULT ''",
+            "preferred_ai_provider": "VARCHAR(16) NOT NULL DEFAULT 'gemini'",
+            "fallback_message": "TEXT NOT NULL DEFAULT 'Hi, I can fix this'",
+            "max_active_applications": "INTEGER NOT NULL DEFAULT 15",
+            "max_per_repo": "INTEGER NOT NULL DEFAULT 2",
+            "stale_minutes": "INTEGER NOT NULL DEFAULT 30",
+            "priority_repos": (
+                "TEXT NOT NULL DEFAULT 'Fluxora-Org\nTalenttrust\nChronopay'"
+            ),
+        },
+        "issue_records": {
+            "application_id": "VARCHAR(120) NOT NULL DEFAULT ''",
+        },
+    }
+    for table_name, columns in additions.items():
+        if table_name not in table_names:
+            continue
+        existing = {
+            column["name"] for column in inspect(engine).get_columns(table_name)
+        }
+        for column_name, definition in columns.items():
+            if column_name in existing:
+                continue
+            with engine.begin() as connection:
+                connection.execute(text(
+                    f'ALTER TABLE "{table_name}" ADD COLUMN "{column_name}" {definition}'
+                ))

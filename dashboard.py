@@ -21,6 +21,7 @@ from flask import (
 )
 from sqlalchemy import delete, desc, select
 
+from ai_writer import PROVIDERS, test_provider
 from database import SessionLocal, init_db
 from models import ActivityLog, BotSettings, EnrollmentToken, IssueRecord, User, utcnow
 from security import decrypt_secret, encrypt_secret
@@ -233,8 +234,14 @@ def create_app(test_config: dict | None = None) -> Flask:
         bot_settings = get_or_create_settings(g.db, g.user.id)
         if request.method == "POST":
             enabled = request.form.get("enabled") == "on"
-            max_candidates = bounded_int(request.form.get("max_candidates"), 1, 30, 10)
             poll_minutes = bounded_int(request.form.get("poll_minutes"), 2, 60, 5)
+            max_active = bounded_int(request.form.get("max_active_applications"), 1, 15, 15)
+            max_per_repo = bounded_int(request.form.get("max_per_repo"), 1, 2, 2)
+            stale_minutes = bounded_int(request.form.get("stale_minutes"), 5, 1440, 30)
+            preferred = request.form.get("preferred_ai_provider", "gemini").strip().lower()
+            fallback_message = request.form.get("fallback_message", "").strip()
+            priority_repos_raw = request.form.get("priority_repos", "")
+            action = request.form.get("action", "save")
 
             session_text = request.form.get("drips_session", "").strip()
             uploaded = request.files.get("drips_session_file")
@@ -242,6 +249,7 @@ def create_app(test_config: dict | None = None) -> Flask:
                 session_text = uploaded.read().decode("utf-8").strip()
 
             try:
+                priorities = normalize_priority_repos(priority_repos_raw)
                 if session_text:
                     session_text = normalize_drips_session(session_text)
                     bot_settings.drips_session_encrypted = encrypt_secret(session_text)
@@ -251,14 +259,39 @@ def create_app(test_config: dict | None = None) -> Flask:
 
                 if enabled and not bot_settings.drips_session_encrypted:
                     raise ValueError("Connect a Drips session before enabling monitoring")
+                if preferred not in PROVIDERS:
+                    raise ValueError("Choose a supported preferred AI provider")
+                if not 5 <= len(fallback_message) <= 500:
+                    raise ValueError("Fallback message must contain 5–500 characters")
+
+                for provider in PROVIDERS:
+                    api_key = request.form.get(f"{provider}_api_key", "").strip()
+                    encrypted_field = f"{provider}_api_key_encrypted"
+                    if api_key:
+                        setattr(bot_settings, encrypted_field, encrypt_secret(api_key))
+                    if request.form.get(f"clear_{provider}_api_key") == "yes":
+                        setattr(bot_settings, encrypted_field, "")
 
                 bot_settings.enabled = enabled
-                bot_settings.max_candidates = max_candidates
                 bot_settings.poll_minutes = poll_minutes
+                bot_settings.max_active_applications = max_active
+                bot_settings.max_per_repo = max_per_repo
+                bot_settings.stale_minutes = stale_minutes
+                bot_settings.preferred_ai_provider = preferred
+                bot_settings.fallback_message = fallback_message
+                bot_settings.priority_repos = priorities
                 g.db.commit()
-                flash("Settings saved.", "success")
+                if action.startswith("test_"):
+                    provider = action.removeprefix("test_")
+                    if provider not in PROVIDERS:
+                        raise ValueError("Unknown AI provider")
+                    api_key = decrypt_secret(getattr(bot_settings, f"{provider}_api_key_encrypted"))
+                    test_provider(provider, api_key)
+                    flash(f"{provider.title()} connection successful.", "success")
+                else:
+                    flash("Automation settings saved.", "success")
                 return redirect(url_for("settings"))
-            except (ValueError, UnicodeDecodeError) as exc:
+            except Exception as exc:
                 g.db.rollback()
                 flash(str(exc), "error")
 
@@ -266,6 +299,10 @@ def create_app(test_config: dict | None = None) -> Flask:
             "settings.html",
             settings=bot_settings,
             has_drips=bool(bot_settings.drips_session_encrypted),
+            connected_ai={
+                provider: bool(getattr(bot_settings, f"{provider}_api_key_encrypted"))
+                for provider in PROVIDERS
+            },
         )
 
     @app.post("/settings/connection-code")
@@ -499,6 +536,22 @@ def bounded_int(raw: str | None, minimum: int, maximum: int, default: int) -> in
         return max(minimum, min(maximum, int(raw or default)))
     except ValueError:
         return default
+
+
+def normalize_priority_repos(raw: str) -> str:
+    values = []
+    for value in re.split(r"[,\n]", raw or ""):
+        normalized = value.strip().strip("/")
+        if not normalized or normalized.lower() in {item.lower() for item in values}:
+            continue
+        if len(normalized) > 255 or not re.fullmatch(
+            r"[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)?", normalized
+        ):
+            raise ValueError(f"Invalid priority repository: {normalized[:80]}")
+        values.append(normalized)
+    if len(values) > 100:
+        raise ValueError("Priority list cannot contain more than 100 repositories")
+    return "\n".join(values)
 
 
 def owned_record_or_404(db, user_id: int, record_id: int) -> IssueRecord:

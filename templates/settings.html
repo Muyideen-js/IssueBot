@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Setup · IssueBot{% endblock %}
 {% block content %}
-<header class="page-head"><div><p class="eyebrow">Configuration</p><h1>Bot setup</h1><p class="page-description">Connect Drips and choose how often IssueBot checks Wave.</p></div></header>
+<header class="page-head"><div><p class="eyebrow">Configuration</p><h1>Automation setup</h1><p class="page-description">Connect Drips, configure AI writing, and control automatic applications.</p></div></header>
 <form method="post" enctype="multipart/form-data" class="stack">
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
   <div class="settings-grid">
@@ -17,13 +17,36 @@
     </section>
 
     <section class="panel stack">
-      <div class="panel-title"><h2>Monitoring</h2><span class="badge">Wave</span></div>
-      <label class="checkbox"><input type="checkbox" name="enabled" {% if settings.enabled %}checked{% endif %}> Enable monitoring</label>
-      <label>Review queue size<span class="field-note">Between 1 and 30 candidates</span><input type="number" name="max_candidates" min="1" max="30" value="{{ settings.max_candidates }}"></label>
+      <div class="panel-title"><h2>Automatic applications</h2><span class="badge">Wave</span></div>
+      <label class="checkbox"><input type="checkbox" name="enabled" {% if settings.enabled %}checked{% endif %}> Apply automatically</label>
+      <label>Active application slots<span class="field-note">Drips allows at most 15</span><input type="number" name="max_active_applications" min="1" max="15" value="{{ settings.max_active_applications }}"></label>
+      <label>Maximum per repository<span class="field-note">Limited to two applications per repository</span><input type="number" name="max_per_repo" min="1" max="2" value="{{ settings.max_per_repo }}"></label>
       <label>Scan interval<span class="field-note">Minutes between scans</span><input type="number" name="poll_minutes" min="2" max="60" value="{{ settings.poll_minutes }}"></label>
-      <p class="muted small">IssueBot only discovers opportunities. It never applies until you review and approve.</p>
+      <label>Rotate pending applications after<span class="field-note">Minutes without assignment</span><input type="number" name="stale_minutes" min="5" max="1440" value="{{ settings.stale_minutes }}"></label>
+      <p class="muted small">When enabled, IssueBot applies without manual approval and keeps available slots filled.</p>
+    </section>
+
+    <section class="panel stack">
+      <div class="panel-title"><h2>AI application writer</h2><span class="badge">Encrypted</span></div>
+      <p class="muted small">Keys are encrypted on the server. Leave a key blank to keep the saved value.</p>
+      {% for provider in ['gemini', 'deepseek', 'openai'] %}
+      <div class="credential-row">
+        <label>{{ provider|title }} API key<span class="field-note">{{ 'Connected' if connected_ai[provider] else 'Not connected' }}</span><input type="password" name="{{ provider }}_api_key" autocomplete="off" placeholder="{{ 'Saved securely' if connected_ai[provider] else 'Paste API key' }}"></label>
+        <div class="inline">
+          <button class="secondary" type="submit" name="action" value="test_{{ provider }}">Save &amp; test</button>
+          {% if connected_ai[provider] %}<label class="checkbox small"><input type="checkbox" name="clear_{{ provider }}_api_key" value="yes"> Remove key</label>{% endif %}
+        </div>
+      </div>
+      {% endfor %}
+      <label>Preferred provider<select name="preferred_ai_provider">{% for provider in ['gemini', 'deepseek', 'openai'] %}<option value="{{ provider }}" {% if settings.preferred_ai_provider == provider %}selected{% endif %}>{{ provider|title }}</option>{% endfor %}</select><span class="field-note">If it fails, IssueBot tries the other connected providers automatically.</span></label>
+    </section>
+
+    <section class="panel stack">
+      <div class="panel-title"><h2>Fallback &amp; priorities</h2><span class="badge">Automatic</span></div>
+      <label>Fallback application message<span class="field-note">Used when no AI key is connected or every provider fails</span><textarea name="fallback_message" minlength="5" maxlength="500" required>{{ settings.fallback_message }}</textarea></label>
+      <label>Priority repositories<span class="field-note">One owner or owner/repository per line. Assigned repositories are added automatically.</span><textarea name="priority_repos" placeholder="Fluxora-Org&#10;Talenttrust&#10;Chronopay">{{ settings.priority_repos }}</textarea></label>
     </section>
   </div>
-  <div><button type="submit">Save configuration</button></div>
+  <div><button type="submit" name="action" value="save">Save automation</button></div>
 </form>
 {% endblock %}

@@ -18,6 +18,7 @@ os.environ["ADMIN_USERNAME"] = "admin"
 os.environ["ADMIN_PASSWORD"] = "admin-password-123"
 
 import dashboard  # noqa: E402
+import automation  # noqa: E402
 import worker  # noqa: E402
 from database import Base, SessionLocal, engine  # noqa: E402
 from models import BotSettings, EnrollmentToken, IssueRecord, User, utcnow  # noqa: E402
@@ -189,6 +190,48 @@ class PortalTestCase(unittest.TestCase):
         response = self.client.post("/settings", data={})
         self.assertEqual(response.status_code, 400)
 
+    def test_user_ai_keys_are_encrypted_and_never_rendered(self):
+        with SessionLocal() as db:
+            user = User(username="ai-user", must_change_password=False)
+            user.set_password("ai-user-password-123")
+            db.add(user)
+            db.flush()
+            db.add(BotSettings(user_id=user.id))
+            db.commit()
+            user_id = user.id
+
+        self.login("ai-user", "ai-user-password-123")
+        token = self.csrf("/settings")
+        response = self.client.post(
+            "/settings",
+            data={
+                "csrf_token": token,
+                "action": "save",
+                "poll_minutes": "5",
+                "max_active_applications": "15",
+                "max_per_repo": "2",
+                "stale_minutes": "30",
+                "preferred_ai_provider": "deepseek",
+                "fallback_message": "Hi, I can fix this",
+                "priority_repos": "Fluxora-Org\nowner/repo",
+                "gemini_api_key": "gemini-secret-key",
+                "deepseek_api_key": "deepseek-secret-key",
+                "openai_api_key": "openai-secret-key",
+            },
+            follow_redirects=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn(b"gemini-secret-key", response.data)
+        self.assertNotIn(b"deepseek-secret-key", response.data)
+        self.assertNotIn(b"openai-secret-key", response.data)
+        with SessionLocal() as db:
+            settings = db.query(BotSettings).filter_by(user_id=user_id).one()
+            self.assertEqual(decrypt_secret(settings.gemini_api_key_encrypted), "gemini-secret-key")
+            self.assertEqual(decrypt_secret(settings.deepseek_api_key_encrypted), "deepseek-secret-key")
+            self.assertEqual(decrypt_secret(settings.openai_api_key_encrypted), "openai-secret-key")
+            self.assertEqual(settings.preferred_ai_provider, "deepseek")
+            self.assertEqual(settings.max_active_applications, 15)
+
     def test_expired_login_form_recovers_with_fresh_page(self):
         stale_token = self.csrf("/login")
         with self.client.session_transaction() as browser_session:
@@ -216,6 +259,8 @@ class PortalTestCase(unittest.TestCase):
             db.add(settings)
             db.commit()
 
+            applied = []
+
             class FakeClient:
                 def __init__(self, session_state):
                     self.session_state = session_state
@@ -232,13 +277,203 @@ class PortalTestCase(unittest.TestCase):
                         "points": 150,
                     }], False
 
-            with patch.object(worker, "WaveClient", FakeClient):
-                worker.run_user_cycle(db, user, settings)
+                def apply(self, issue_id, message):
+                    applied.append((issue_id, message))
+                    return True, "Application submitted", False
+
+                def withdraw(self, application):
+                    return True, "Application withdrawn", False
+
+            with patch.object(automation, "WaveClient", FakeClient):
+                automation.run_user_cycle(db, user, settings)
 
             records = db.query(IssueRecord).filter_by(user_id=user.id).all()
             self.assertEqual(len(records), 1)
-            self.assertEqual(records[0].status, "candidate")
-            self.assertIn("Fix the test suite", records[0].application_text)
+            self.assertEqual(records[0].status, "pending")
+            self.assertEqual(records[0].application_text, "Hi, I can fix this")
+            self.assertEqual(applied, [("issue-1", "Hi, I can fix this")])
+
+    def test_automatic_worker_enforces_two_applications_per_repository(self):
+        with SessionLocal() as db:
+            user = User(username="limit-user", must_change_password=False)
+            user.set_password("limit-user-password-123")
+            db.add(user)
+            db.flush()
+            settings = BotSettings(
+                user_id=user.id,
+                enabled=True,
+                max_active_applications=15,
+                max_per_repo=2,
+                drips_session_encrypted=encrypt_secret('{"cookies": []}'),
+            )
+            db.add(settings)
+            db.commit()
+            applied = []
+
+            class FakeClient:
+                def __init__(self, session_state):
+                    self.session_state = session_state
+
+                def fetch_applications(self, status):
+                    return [], False
+
+                def fetch_open_issues(self):
+                    return [
+                        {
+                            "id": f"same-repo-{number}",
+                            "title": f"Issue {number}",
+                            "repository": {"fullName": "owner/repo"},
+                        }
+                        for number in range(3)
+                    ], False
+
+                def apply(self, issue_id, message):
+                    applied.append(issue_id)
+                    return True, "Application submitted", False
+
+                def withdraw(self, application):
+                    return True, "Application withdrawn", False
+
+            with patch.object(automation, "WaveClient", FakeClient):
+                automation.run_user_cycle(db, user, settings)
+
+            self.assertEqual(len(applied), 2)
+            self.assertEqual(
+                db.query(IssueRecord).filter_by(user_id=user.id, status="pending").count(),
+                2,
+            )
+
+    def test_priority_issue_preempts_non_priority_when_slots_are_full(self):
+        with SessionLocal() as db:
+            user = User(username="priority-user", must_change_password=False)
+            user.set_password("priority-user-password-123")
+            db.add(user)
+            db.flush()
+            settings = BotSettings(
+                user_id=user.id,
+                enabled=True,
+                max_active_applications=1,
+                max_per_repo=2,
+                priority_repos="priority-owner",
+                drips_session_encrypted=encrypt_secret('{"cookies": []}'),
+            )
+            db.add(settings)
+            old_record = IssueRecord(
+                user_id=user.id,
+                issue_id="normal-issue",
+                title="Normal issue",
+                repo="normal-owner/repo",
+                status="pending",
+                applied_at=utcnow(),
+            )
+            db.add(old_record)
+            db.commit()
+            withdrawn = []
+            applied = []
+
+            class FakeClient:
+                def __init__(self, session_state):
+                    self.session_state = session_state
+
+                def fetch_applications(self, status):
+                    if status == "pending":
+                        return [{
+                            "id": "normal-app",
+                            "issue": {
+                                "id": "normal-issue",
+                                "title": "Normal issue",
+                                "repository": {"fullName": "normal-owner/repo"},
+                            },
+                        }], False
+                    return [], False
+
+                def fetch_open_issues(self):
+                    return [{
+                        "id": "priority-issue",
+                        "title": "Priority issue",
+                        "repository": {"fullName": "priority-owner/repo"},
+                    }], False
+
+                def apply(self, issue_id, message):
+                    applied.append(issue_id)
+                    return True, "Application submitted", False
+
+                def withdraw(self, application):
+                    withdrawn.append(application["id"])
+                    return True, "Application withdrawn", False
+
+            with patch.object(automation, "WaveClient", FakeClient):
+                automation.run_user_cycle(db, user, settings)
+
+            self.assertEqual(withdrawn, ["normal-app"])
+            self.assertEqual(applied, ["priority-issue"])
+            self.assertEqual(db.query(IssueRecord).filter_by(issue_id="normal-issue").one().status, "preempted")
+            self.assertEqual(db.query(IssueRecord).filter_by(issue_id="priority-issue").one().status, "pending")
+
+    def test_stale_application_is_withdrawn_and_replaced(self):
+        with SessionLocal() as db:
+            user = User(username="rotation-user", must_change_password=False)
+            user.set_password("rotation-user-password-123")
+            db.add(user)
+            db.flush()
+            settings = BotSettings(
+                user_id=user.id,
+                enabled=True,
+                max_active_applications=1,
+                stale_minutes=30,
+                drips_session_encrypted=encrypt_secret('{"cookies": []}'),
+            )
+            db.add(settings)
+            db.add(IssueRecord(
+                user_id=user.id,
+                issue_id="stale-issue",
+                title="Stale issue",
+                repo="old/repo",
+                status="pending",
+                applied_at=utcnow() - timedelta(minutes=31),
+            ))
+            db.commit()
+            withdrawn = []
+            applied = []
+
+            class FakeClient:
+                def __init__(self, session_state):
+                    self.session_state = session_state
+
+                def fetch_applications(self, status):
+                    if status == "pending":
+                        return [{
+                            "id": "stale-app",
+                            "issue": {
+                                "id": "stale-issue",
+                                "title": "Stale issue",
+                                "repository": {"fullName": "old/repo"},
+                            },
+                        }], False
+                    return [], False
+
+                def fetch_open_issues(self):
+                    return [{
+                        "id": "fresh-issue",
+                        "title": "Fresh issue",
+                        "repository": {"fullName": "new/repo"},
+                    }], False
+
+                def withdraw(self, application):
+                    withdrawn.append(application["id"])
+                    return True, "Application withdrawn", False
+
+                def apply(self, issue_id, message):
+                    applied.append(issue_id)
+                    return True, "Application submitted", False
+
+            with patch.object(automation, "WaveClient", FakeClient):
+                automation.run_user_cycle(db, user, settings)
+
+            self.assertEqual(withdrawn, ["stale-app"])
+            self.assertEqual(applied, ["fresh-issue"])
+            self.assertEqual(db.query(IssueRecord).filter_by(issue_id="stale-issue").one().status, "expired")
+            self.assertEqual(db.query(IssueRecord).filter_by(issue_id="fresh-issue").one().status, "pending")
 
 
 if __name__ == "__main__":

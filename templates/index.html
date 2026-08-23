@@ -2,12 +2,12 @@
 {% block title %}Dashboard · IssueBot{% endblock %}
 {% block content %}
 <header class="page-head">
-  <div><p class="eyebrow">Drips Wave</p><h1>Your workspace</h1><p class="page-description">Review opportunities and control every application.</p></div>
-  <a class="button secondary" href="{{ url_for('settings') }}">Configure monitoring</a>
+  <div><p class="eyebrow">Drips Wave</p><h1>Your workspace</h1><p class="page-description">Monitor automatic applications, assignments, and slot rotation.</p></div>
+  <a class="button secondary" href="{{ url_for('settings') }}">Configure automation</a>
 </header>
 
 <section class="grid section-gap" aria-label="Application summary">
-  <div class="panel metric"><div class="stat">{{ candidates|length }}</div><div class="muted small">Awaiting review</div></div>
+  <div class="panel metric"><div class="stat">{{ candidates|length }}</div><div class="muted small">Queued opportunities</div></div>
   <div class="panel metric"><div class="stat">{{ pending|length }}</div><div class="muted small">Pending applications</div></div>
   <div class="panel metric"><div class="stat">{{ accepted|length }}</div><div class="muted small">Accepted assignments</div></div>
 </section>
@@ -15,7 +15,7 @@
 <section class="panel section-gap">
   <div class="monitor-row">
     <span class="status-dot {{ 'live' if settings.enabled and not settings.last_error else '' }}" aria-hidden="true"></span>
-    <div><strong>Wave monitoring</strong><div class="muted small">Last successful scan: <span class="mono">{{ settings.last_success_at or 'Not yet run' }}</span></div></div>
+    <div><strong>Automatic Wave applications</strong><div class="muted small">Last successful scan: <span class="mono">{{ settings.last_success_at or 'Not yet run' }}</span></div></div>
     <span class="badge {{ 'status-good' if settings.enabled and not settings.last_error else 'status-warn' }}">{{ 'Enabled' if settings.enabled else 'Paused' }}</span>
   </div>
   {% if settings.last_error %}<p class="status-bad small" style="margin:10px 0 0 20px">{{ settings.last_error }}</p>{% endif %}
@@ -23,18 +23,13 @@
 
 <div class="grid dashboard-grid">
   <section class="panel">
-    <div class="panel-title"><h2>Issue candidates</h2><span class="badge">{{ candidates|length }} open</span></div>
+    <div class="panel-title"><h2>Automatic queue</h2><span class="badge">{{ candidates|length }} waiting</span></div>
     {% for issue in candidates %}
     <article class="issue">
       <div><a class="issue-title" href="{{ issue.url }}" target="_blank" rel="noopener">{{ issue.title }}</a><div class="meta"><span>{{ issue.repo }}</span>{% if issue.points %}<span>{{ issue.points }} points</span>{% endif %}</div></div>
-      <form method="post" action="{{ url_for('approve_issue', record_id=issue.id) }}" class="stack">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <label>Application message<textarea name="application_text" maxlength="1000" required>{{ issue.application_text }}</textarea></label>
-        <div class="inline"><button type="submit">Approve and apply</button></div>
-      </form>
-      <form method="post" action="{{ url_for('dismiss_issue', record_id=issue.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="secondary" type="submit">Dismiss</button></form>
+      <p class="muted small">Waiting for an available slot or repository allowance. No manual approval is required.</p>
     </article>
-    {% else %}<div class="empty">No candidates yet. Enable monitoring in Setup.</div>{% endfor %}
+    {% else %}<div class="empty">No queued opportunities. IssueBot will apply when new matching issues appear.</div>{% endfor %}
   </section>
 
   <aside class="stack">

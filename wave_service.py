@@ -146,6 +146,29 @@ class WaveClient:
             error = response.text
         return False, f"Drips rejected the application: {str(error)[:180]}", changed
 
+    def withdraw(self, application: dict[str, Any]) -> tuple[bool, str, bool]:
+        """Withdraw one confirmed pending application using its Drips identifiers."""
+        token, changed = self.ensure_token()
+        application_id = str(application.get("id") or "")
+        issue = application.get("issue") or {}
+        issue_id = str(application.get("issueId") or issue.get("id") or "")
+        if not application_id or not issue_id:
+            return False, "Drips application is missing its application or issue ID", changed
+        response = self.http.delete(
+            f"{WAVE_API}/wave-programs/{WAVE_PROGRAM_ID}/issues/"
+            f"{issue_id}/applications/{application_id}",
+            headers=self._headers(token),
+            timeout=self.timeout,
+        )
+        if response.status_code in {200, 204}:
+            return True, "Application withdrawn", changed
+        try:
+            payload = response.json()
+            error = payload.get("error") or payload.get("message") or response.text
+        except Exception:
+            error = response.text
+        return False, f"Drips rejected the withdrawal: {str(error)[:180]}", changed
+
 
 def issue_repo(issue: dict[str, Any]) -> str:
     repo = issue.get("repo") or issue.get("repository") or ""
