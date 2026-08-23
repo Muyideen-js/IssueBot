@@ -1,15 +1,48 @@
+envVarGroups:
+  - name: issuebot-secrets
+    envVars:
+      - key: APP_SECRET
+        generateValue: true
+      - key: CREDENTIAL_ENCRYPTION_KEY
+        sync: false
+      - key: ADMIN_USERNAME
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+
+databases:
+  - name: issuebot-db
+    plan: basic-256mb
+    ipAllowList: []
+
 services:
   - type: web
-    name: issuebot-dashboard
-    env: python
-    buildCommand: pip install flask gunicorn requests
+    name: issuebot-web
+    runtime: python
+    plan: starter
+    buildCommand: pip install -r requirements.txt
     startCommand: gunicorn dashboard:app --bind 0.0.0.0:$PORT
+    healthCheckPath: /health
     envVars:
-      - key: DASHBOARD_PASSWORD
-        sync: false
-      - key: DASHBOARD_SECRET_KEY
-        sync: false
-      - key: SYNC_SECRET
-        sync: false
-      - key: ACCEPTANCE_TIMEOUT_HOURS
-        value: "24"
+      - key: APP_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: issuebot-db
+          property: connectionString
+      - fromGroup: issuebot-secrets
+
+  - type: worker
+    name: issuebot-worker
+    runtime: python
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    startCommand: python worker.py
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: issuebot-db
+          property: connectionString
+      - fromGroup: issuebot-secrets

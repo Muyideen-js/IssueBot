@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}IssueBot Admin{% endblock %}</title>
+  <style>
+    :root { color-scheme:dark; --bg:#071018; --panel:#0e1c28; --line:#244052; --text:#ecfeff; --muted:#8da7b5; --brand:#0891b2; }
+    * { box-sizing:border-box; } body { margin:0; min-height:100vh; background:linear-gradient(145deg,#071018,#0a1822); color:var(--text); font:15px/1.5 Inter,Segoe UI,sans-serif; }
+    nav { display:flex; align-items:center; justify-content:space-between; padding:16px max(20px,calc((100% - 1120px)/2)); border-bottom:1px solid var(--line); background:#071018e8; }
+    .brand { color:white; font-size:19px; font-weight:800; text-decoration:none; }.brand span { color:#22d3ee; }
+    .container { width:min(1120px,calc(100% - 32px)); margin:32px auto 70px; }.panel { background:var(--panel); border:1px solid var(--line); border-radius:16px; padding:22px; }
+    .stack { display:grid; gap:16px; }.grid { display:grid; grid-template-columns:1fr 1fr auto; gap:16px; }.inline { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }.inline form { margin:0; }
+    h1,h2 { margin-top:0; } input { width:100%; background:#07131c; border:1px solid #315268; color:var(--text); border-radius:9px; padding:10px 12px; font:inherit; } label { display:grid; gap:7px; font-weight:600; }
+    button { border:0; border-radius:9px; padding:10px 14px; background:var(--brand); color:white; font-weight:700; cursor:pointer; }.secondary { background:#263d4b; }.danger { background:#991b1b; }
+    table { width:100%; border-collapse:collapse; } th,td { text-align:left; padding:12px 10px; border-bottom:1px solid var(--line); vertical-align:top; }.muted,.field-note { color:var(--muted); }.field-note { font-size:12px; font-weight:400; }
+    .flash { padding:12px 14px; border-radius:10px; margin-bottom:16px; background:#153247; border:1px solid #285879; }.flash.error { background:#3a181c; }.flash.success { background:#123628; }
+    .auth-shell { width:min(430px,calc(100% - 32px)); margin:9vh auto; }.auth-shell .panel { padding:30px; }
+    @media(max-width:760px) { .grid { grid-template-columns:1fr; } table { display:block; overflow-x:auto; } }
+  </style>
+</head>
+<body>
+{% if current_user and current_user.is_admin %}<nav><a class="brand" href="{{ url_for('admin_dashboard') }}">IssueBot <span>Admin</span></a><form method="post" action="{{ url_for('admin_logout') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="secondary">Sign out</button></form></nav>{% endif %}
+<main class="{% block main_class %}container{% endblock %}">
+  {% with messages = get_flashed_messages(with_categories=true) %}{% for category, message in messages %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}{% endwith %}
+  {% block content %}{% endblock %}
+</main>
+</body>
+</html>

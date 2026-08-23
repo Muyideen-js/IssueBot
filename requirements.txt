@@ -4,3 +4,6 @@ requests>=2.31.0
 pyotp>=2.9.0
 flask>=3.0.0
 gunicorn>=21.2.0
+SQLAlchemy>=2.0.0
+cryptography>=42.0.0
+psycopg[binary]>=3.2.0

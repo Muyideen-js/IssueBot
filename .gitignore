@@ -1,5 +1,6 @@
 # Secrets — NEVER commit these
 .env
+.env.local
 sessions/
 users/
 
@@ -8,6 +9,7 @@ bot.log
 logs/
 state.json
 states/
+*.db
 *.png
 debug_*.png
 

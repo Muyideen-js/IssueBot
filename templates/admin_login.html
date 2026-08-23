@@ -1,14 +1,14 @@
-{% extends "base.html" %}
-{% block title %}Sign in · IssueBot{% endblock %}
+{% extends "admin_base.html" %}
+{% block title %}Administrator sign in · IssueBot{% endblock %}
 {% block main_class %}auth-shell{% endblock %}
 {% block content %}
 <section class="panel stack">
-  <div><h1>Welcome back</h1><p class="muted">Use the account created for you by the administrator.</p></div>
+  <div><h1>Administrator sign in</h1><p class="muted">Manage IssueBot user accounts.</p></div>
   <form method="post" class="stack">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <label>Username<input name="username" autocomplete="username" required autofocus></label>
+    <label>Admin username<input name="username" autocomplete="username" required autofocus></label>
     <label>Password<input type="password" name="password" autocomplete="current-password" required></label>
-    <button type="submit">Sign in</button>
+    <button type="submit">Open admin panel</button>
   </form>
 </section>
 {% endblock %}

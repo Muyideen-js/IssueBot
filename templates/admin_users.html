@@ -1,0 +1,27 @@
+{% extends "admin_base.html" %}
+{% block title %}Users · IssueBot{% endblock %}
+{% block content %}
+<h1>User administration</h1>
+<section class="panel stack" style="margin-bottom:20px">
+  <h2>Create user</h2>
+  <form method="post" class="grid" style="align-items:end">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>Username<input name="username" minlength="3" maxlength="40" required></label>
+    <label>Temporary password<span class="field-note">Share it through a secure channel</span><input type="password" name="temporary_password" minlength="10" required></label>
+    <button>Create user</button>
+  </form>
+</section>
+<section class="panel">
+  <h2>Users</h2>
+  <table><thead><tr><th>User</th><th>Status</th><th>Bot</th><th>Actions</th></tr></thead><tbody>
+  {% for user in users %}
+    <tr><td>{{ user.username }}</td><td>{{ 'Active' if user.is_active else 'Disabled' }}</td><td>{{ 'Enabled' if user.settings and user.settings.enabled else 'Paused' }}</td><td><div class="inline">
+      <form method="post" action="{{ url_for('admin_toggle_user', user_id=user.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="secondary">{{ 'Disable' if user.is_active else 'Enable' }}</button></form>
+      <form method="post" action="{{ url_for('admin_reset_password', user_id=user.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="password" name="temporary_password" placeholder="New temporary password" minlength="10" required style="width:210px"><button class="secondary">Reset</button></form>
+      <form method="post" action="{{ url_for('admin_delete_user', user_id=user.id) }}" onsubmit="return confirm('Delete this user and all of their IssueBot data?')"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="danger">Delete</button></form>
+    </div></td></tr>
+  {% else %}<tr><td colspan="4" class="muted">No user accounts yet.</td></tr>
+  {% endfor %}
+  </tbody></table>
+</section>
+{% endblock %}

@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Settings · IssueBot{% endblock %}
+{% block content %}
+<h1>Bot settings</h1>
+<form method="post" enctype="multipart/form-data" class="stack">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <section class="panel stack">
+    <h2>Drips connection</h2>
+    <p class="muted">Recommended: generate a one-time connection code, then enter it in the IssueBot Connector desktop app. The connector opens Drips in your own browser and sends the session directly to this service.</p>
+    <div class="status-{{ 'good' if has_drips else 'warn' }}">{{ 'Drips session connected' if has_drips else 'No Drips session connected' }}</div>
+    <button class="secondary" type="submit" formaction="{{ url_for('connection_code') }}" formmethod="post">Generate connection code</button>
+    <details><summary>Advanced: import session JSON manually</summary><div class="stack" style="margin-top:12px">
+    <label>Session JSON file<input type="file" name="drips_session_file" accept="application/json,.json"></label>
+    <label>Or paste session JSON<textarea name="drips_session" placeholder="Leave empty to keep the existing session"></textarea></label>
+    </div></details>
+    {% if has_drips %}<label class="checkbox"><input type="checkbox" name="clear_drips" value="yes"> Remove stored Drips session</label>{% endif %}
+  </section>
+
+  <section class="panel stack">
+    <h2>Monitoring</h2>
+    <label class="checkbox"><input type="checkbox" name="enabled" {% if settings.enabled %}checked{% endif %}> Enable Wave monitoring</label>
+    <label>Maximum review candidates<input type="number" name="max_candidates" min="1" max="30" value="{{ settings.max_candidates }}"></label>
+    <label>Scan interval in minutes<input type="number" name="poll_minutes" min="2" max="60" value="{{ settings.poll_minutes }}"></label>
+    <p class="muted small">Monitoring discovers issues. It never applies until you review the scope, edit the message, and click Approve.</p>
+  </section>
+
+  <button type="submit">Save settings</button>
+</form>
+{% endblock %}

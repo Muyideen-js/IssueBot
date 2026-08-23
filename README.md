@@ -1,167 +1,91 @@
-# 🤖 IssueBot — GrantFox + Drips Wave Automation
+# IssueBot Private Portal
 
-Automatically applies for open issues on GrantFox and Drips Wave,
-monitors assignment, cancels on timeout, and sends Telegram notifications.
-Includes a live web dashboard your friends can view from anywhere.
+IssueBot is a private, multi-user Drips Wave assistant with two separate sites. The owner manages accounts in an admin-only panel. Each normal user gets a separate portal where they connect Drips, monitor activity, review issue candidates, and explicitly approve applications.
 
----
+The server source can remain in a private repository. Users receive only the hosted website and the optional compiled connector. Browser-delivered HTML/CSS is inherently visible, and compiled programs can be reverse-engineered, so client-side distribution cannot provide absolute source secrecy.
 
-## 📁 File Structure
+## Architecture
 
-```
-IssueBot/
-├── bot.py              ← browser automation (runs on your PC)
-├── dashboard.py        ← web dashboard server (deploy to Render)
-├── run.py              ← starts both bot + dashboard together
-├── debug_selectors.py  ← debugging tool for CSS selectors
-├── requirements.txt    ← all Python dependencies
-├── render.yaml         ← Render deploy config
-├── .env                ← your credentials (never commit!)
-├── .env.example        ← template for .env
-├── .gitignore          ← protects secrets from git
-│
-├── templates/          ← dashboard HTML pages
-│   ├── index.html      ← main dashboard UI
-│   └── login.html      ← password login page
-│
-├── sessions/           ← browser sessions (auto-created)
-│   ├── grantfox.json
-│   └── drips.json
-│
-├── state.json          ← bot state (auto-created)
-└── bot.log             ← activity log (auto-created)
+```text
+Admin panel        create, disable, reset, and delete user accounts
+User portal        setup, candidates, applications, and on-site activity
+PostgreSQL         users, encrypted Drips sessions, issues, and activity
+Background worker scans Drips separately for every enabled user
+User connector     imports a Drips session using a one-time code
 ```
 
----
+- `dashboard.py`: separate authenticated user portal and admin panel.
+- `worker.py`: per-user Drips monitoring worker.
+- `wave_service.py`: fail-closed Drips API client.
+- `models.py`: tenant-scoped SQLAlchemy models.
+- `security.py`: Fernet credential encryption.
+- `connector.py`: user-facing one-time Drips connection helper.
 
-## ⚡ Quick Setup
+## Security model
 
-### 1. Install dependencies
-```bash
-pip install -r requirements.txt
-python -m playwright install chromium
+- There is no public registration.
+- The administrator creates every user and temporary password.
+- Admin and normal-user sign-in routes and permissions are separate.
+- Users must change their temporary password on first login.
+- Drips sessions are encrypted at rest.
+- Users can only query or modify records belonging to their own account.
+- All state-changing browser forms use CSRF protection.
+- Login attempts are throttled.
+- The service does not collect GitHub passwords.
+- Monitoring only creates a private candidate queue. A user must review scope and explicitly approve each application.
+
+Each participant must use their own Drips account and KYC identity. Account sharing is prohibited by the [Drips Wave terms](https://docs.drips.network/wave/terms-and-rules/).
+
+## Local setup
+
+1. Install dependencies with `pip install -r requirements.txt`.
+2. Copy `.env.example` to `.env` and generate strong secrets.
+3. Start the portal and worker with `python run.py`.
+4. Open `http://localhost:5000/admin/login` and sign in with `ADMIN_USERNAME` and `ADMIN_PASSWORD`.
+
+Generate the encryption key with:
+
+```powershell
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
 
-### 2. Configure your .env
-```bash
-copy .env.example .env
-```
-Fill in your GitHub credentials, Telegram tokens, etc.
+## Administrator flow
 
-### 3. Login once (saves your browser session)
-```bash
-# Both platforms
-python bot.py --login
+1. Sign in at `/admin/login`. Admin accounts cannot enter the normal user portal.
+2. Create a username and temporary password.
+3. Give those credentials to the intended user through a secure channel.
+4. Disable the user at any time to stop monitoring and block access.
+5. Reset a password, or permanently delete the user and all their IssueBot data.
 
-# Drips Wave only
-python bot.py --login --platform drips
+## User flow
 
-# GrantFox only
-python bot.py --login --platform grantfox
-```
-Browser opens → log in → press ENTER → session saved.
-**Do NOT close the browser before pressing ENTER.**
+1. Sign in at `/login` and replace the temporary password.
+2. Open **Setup**.
+3. Generate a one-time Drips connection code.
+4. Run the compiled IssueBot Connector, enter the website URL and code, then log in to Drips in the browser window it opens.
+5. Enable monitoring.
+6. Watch scans, new candidates, accepted assignments, applications, and errors in the dashboard Activity feed.
+7. Review candidates, edit the proposed message, and click **Approve and apply**.
 
-### 4. Run everything
-```bash
-# Start bot + dashboard together (recommended)
-python run.py
+Connection codes expire after 15 minutes and can only be used once. The connector does not save the Drips session locally.
 
-# Or run separately:
-python bot.py              # bot only
-python dashboard.py        # dashboard only (http://localhost:5000)
-```
+## Build the Windows connector
 
----
+The connector contains no administrator credentials, database access, or service source. Build it on Windows:
 
-## 🧩 All Bot Commands
-
-| Command | What it does |
-|---|---|
-| `python run.py` | Start bot + dashboard (both platforms) |
-| `python run.py --platform drips` | Drips Wave only |
-| `python run.py --platform grantfox` | GrantFox only |
-| `python run.py --once` | Run one cycle then exit |
-| `python bot.py --login` | Login to both platforms |
-| `python bot.py --login --platform drips` | Login to Drips only |
-
----
-
-## 🌐 Deploy Dashboard to Render (Free)
-
-So your friends can see the dashboard from anywhere:
-
-### Step 1 — Push this repo to GitHub
-```bash
-git add .
-git commit -m "IssueBot"
-git push
+```powershell
+pip install pyinstaller playwright requests
+python build_connector.py
 ```
 
-### Step 2 — Deploy on Render
-1. Go to [render.com](https://render.com) → Sign up free
-2. New → Web Service → Connect your GitHub repo
-3. Render auto-detects `render.yaml` → click Deploy
+Give users only `dist\issuebot-connector.exe` and your HTTPS portal URL.
 
-### Step 3 — Set environment variables on Render
-Go to your Render service → Environment → Add:
-```
-DASHBOARD_PASSWORD    = (password to share with friends)
-DASHBOARD_SECRET_KEY  = (any random string)
-SYNC_SECRET           = (must match SYNC_SECRET in your .env)
-```
+## Render deployment
 
-### Step 4 — Add Render URL to your .env
-```env
-DASHBOARD_URL=https://your-app-name.onrender.com
-SYNC_SECRET=same-secret-as-render
-```
+`render.yaml` provisions a private PostgreSQL database, a public Flask web service, and a private background worker. Before deploying, configure `CREDENTIAL_ENCRYPTION_KEY`, `ADMIN_USERNAME`, and `ADMIN_PASSWORD`.
 
-Now every time the bot runs, it pushes stats to Render.
-Friends open your URL, enter the password, see everything live.
+Render generates `APP_SECRET`. The connected repository should remain private. Official references: [Blueprint specification](https://render.com/docs/blueprint-spec), [background workers](https://render.com/docs/background-workers).
 
----
+## Current limitation
 
-## 📱 Telegram Notifications
-
-| Event | Message |
-|---|---|
-| Bot started | Startup message with config |
-| Applied for issue | Platform + title + URL + countdown |
-| Issue assigned to you | Title + link |
-| Application timed out | Cancelled + hunting next |
-| Error | Error message |
-
----
-
-## 🛠 Troubleshooting
-
-### Apply button not found / 0 issues found
-Run the selector debugger:
-```bash
-python debug_selectors.py grantfox
-python debug_selectors.py drips
-```
-
-### Session expired
-```bash
-# Delete old session and re-login
-del sessions\grantfox.json
-python bot.py --login --platform grantfox
-```
-
-### See what the browser is doing
-Set `HEADLESS=false` in `.env` then run normally.
-
-### GrantFox shows "NOT REGISTERED"
-Go to https://contribute.grantfox.xyz/issues and click REGISTER manually.
-The bot will detect this and alert you on Telegram.
-
----
-
-## ⚠️ Notes
-
-- **Drips Wave Wave 6**: max 5 applications per wave per user
-- **Always review** before marking assigned issues as done
-- **Sessions** last days to weeks — re-run `--login` if auth fails
-- **Render free tier** sleeps after 15 min inactivity — first visit takes ~30s to wake up
+The Drips Wave contributor API is not documented as a stable third-party API. The worker uses the API behavior observed by the existing bot, so Drips frontend/API changes may require maintenance. When a Drips refresh session expires, the user must reconnect with a new one-time code.
