@@ -1,27 +1,33 @@
 {% extends "admin_base.html" %}
-{% block title %}Users · IssueBot{% endblock %}
+{% block title %}Users · IssueBot Admin{% endblock %}
 {% block content %}
-<h1>User administration</h1>
-<section class="panel stack" style="margin-bottom:20px">
-  <h2>Create user</h2>
-  <form method="post" class="grid" style="align-items:end">
+<header class="page-head"><div><p class="eyebrow">Administration</p><h1>User accounts</h1><p class="page-description">Create access, reset credentials, and control who can use IssueBot.</p></div><span class="badge">{{ users|length }} users</span></header>
+
+<section class="panel section-gap">
+  <div class="panel-title"><h2>Create user</h2><span class="muted small">No public registration</span></div>
+  <form method="post" class="grid" style="grid-template-columns:1fr 1fr auto;align-items:end">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <label>Username<input name="username" minlength="3" maxlength="40" required></label>
-    <label>Temporary password<span class="field-note">Share it through a secure channel</span><input type="password" name="temporary_password" minlength="10" required></label>
+    <label>Username<input name="username" minlength="3" maxlength="40" placeholder="e.g. client-one" required></label>
+    <label>Temporary password<span class="field-note">Minimum 10 characters</span><input type="password" name="temporary_password" minlength="10" required></label>
     <button>Create user</button>
   </form>
 </section>
+
 <section class="panel">
-  <h2>Users</h2>
-  <table><thead><tr><th>User</th><th>Status</th><th>Bot</th><th>Actions</th></tr></thead><tbody>
+  <div class="panel-title"><h2>Users</h2><span class="muted small">Admin account is not shown here</span></div>
+  <table><thead><tr><th>User</th><th>Status</th><th>Monitoring</th><th style="text-align:right">Actions</th></tr></thead><tbody>
   {% for user in users %}
-    <tr><td>{{ user.username }}</td><td>{{ 'Active' if user.is_active else 'Disabled' }}</td><td>{{ 'Enabled' if user.settings and user.settings.enabled else 'Paused' }}</td><td><div class="inline">
-      <form method="post" action="{{ url_for('admin_toggle_user', user_id=user.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="secondary">{{ 'Disable' if user.is_active else 'Enable' }}</button></form>
-      <form method="post" action="{{ url_for('admin_reset_password', user_id=user.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="password" name="temporary_password" placeholder="New temporary password" minlength="10" required style="width:210px"><button class="secondary">Reset</button></form>
-      <form method="post" action="{{ url_for('admin_delete_user', user_id=user.id) }}" onsubmit="return confirm('Delete this user and all of their IssueBot data?')"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="danger">Delete</button></form>
-    </div></td></tr>
-  {% else %}<tr><td colspan="4" class="muted">No user accounts yet.</td></tr>
-  {% endfor %}
+    <tr>
+      <td class="user-name">{{ user.username }}</td>
+      <td><span class="badge {{ 'status-good' if user.is_active else 'status-warn' }}">{{ 'Active' if user.is_active else 'Disabled' }}</span></td>
+      <td><span class="badge {{ 'status-good' if user.settings and user.settings.enabled else '' }}">{{ 'Enabled' if user.settings and user.settings.enabled else 'Paused' }}</span></td>
+      <td><div class="inline table-actions">
+        <form method="post" action="{{ url_for('admin_toggle_user', user_id=user.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="secondary">{{ 'Disable' if user.is_active else 'Enable' }}</button></form>
+        <form class="reset-form" method="post" action="{{ url_for('admin_reset_password', user_id=user.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="password" name="temporary_password" placeholder="New temporary password" minlength="10" required><button class="secondary">Reset</button></form>
+        <form method="post" action="{{ url_for('admin_delete_user', user_id=user.id) }}" onsubmit="return confirm('Delete this user and all of their IssueBot data?')"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="danger">Delete</button></form>
+      </div></td>
+    </tr>
+  {% else %}<tr><td colspan="4"><div class="empty">No user accounts yet</div></td></tr>{% endfor %}
   </tbody></table>
 </section>
 {% endblock %}

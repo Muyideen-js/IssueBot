@@ -1,14 +1,15 @@
 {% extends "base.html" %}
 {% block title %}Account · IssueBot{% endblock %}
 {% block content %}
-<section class="panel stack" style="max-width:600px;margin:auto">
-  <div><h1>Account security</h1><p class="muted">Change the temporary password you received from the administrator.</p></div>
+<header class="page-head"><div><p class="eyebrow">Security</p><h1>Your account</h1><p class="page-description">Update the password used to access this workspace.</p></div></header>
+<section class="panel" style="max-width:520px">
+  <div class="panel-title"><h2>Change password</h2><span class="badge">{{ current_user.username }}</span></div>
   <form method="post" class="stack">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <label>Current password<input type="password" name="current_password" autocomplete="current-password" required></label>
-    <label>New password<input type="password" name="new_password" autocomplete="new-password" minlength="10" required></label>
+    <label>New password<span class="field-note">Use at least 10 characters</span><input type="password" name="new_password" autocomplete="new-password" minlength="10" required></label>
     <label>Confirm new password<input type="password" name="confirm_password" autocomplete="new-password" minlength="10" required></label>
-    <button>Update password</button>
+    <div><button>Update password</button></div>
   </form>
 </section>
 {% endblock %}

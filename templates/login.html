@@ -2,13 +2,21 @@
 {% block title %}Sign in · IssueBot{% endblock %}
 {% block main_class %}auth-shell{% endblock %}
 {% block content %}
-<section class="panel stack">
-  <div><h1>Welcome back</h1><p class="muted">Use the account created for you by the administrator.</p></div>
-  <form method="post" class="stack">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <label>Username<input name="username" autocomplete="username" required autofocus></label>
-    <label>Password<input type="password" name="password" autocomplete="current-password" required></label>
-    <button type="submit">Sign in</button>
-  </form>
+<section class="auth-frame">
+  <div class="auth-intro">
+    <div class="brand"><span class="brand-mark">IB</span><span>IssueBot</span></div>
+    <div class="auth-copy"><h2>One place for your Wave work.</h2><p>Connect Drips, review opportunities, and monitor every application from a private workspace.</p></div>
+    <span class="mono">USER PORTAL</span>
+  </div>
+  <div class="auth-panel">
+    <p class="eyebrow">Welcome back</p><h1>Sign in</h1><p class="page-description" style="margin-bottom:20px">Use the account created for you by the administrator.</p>
+    <form method="post" class="stack">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label>Username<input name="username" autocomplete="username" required autofocus></label>
+      <label>Password<input type="password" name="password" autocomplete="current-password" required></label>
+      <button class="button-block" type="submit">Continue to workspace</button>
+    </form>
+    <p class="auth-meta">Private access only · No public registration</p>
+  </div>
 </section>
 {% endblock %}

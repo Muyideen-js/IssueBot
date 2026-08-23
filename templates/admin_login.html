@@ -2,13 +2,21 @@
 {% block title %}Administrator sign in · IssueBot{% endblock %}
 {% block main_class %}auth-shell{% endblock %}
 {% block content %}
-<section class="panel stack">
-  <div><h1>Administrator sign in</h1><p class="muted">Manage IssueBot user accounts.</p></div>
-  <form method="post" class="stack">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <label>Admin username<input name="username" autocomplete="username" required autofocus></label>
-    <label>Password<input type="password" name="password" autocomplete="current-password" required></label>
-    <button type="submit">Open admin panel</button>
-  </form>
+<section class="auth-frame">
+  <div class="auth-intro">
+    <div class="brand"><span class="brand-mark">IB</span><span>IssueBot</span></div>
+    <div class="auth-copy"><h2>Access control, kept simple.</h2><p>Create accounts, manage access, and keep the user workspace separate from administration.</p></div>
+    <span class="mono">ADMIN PORTAL</span>
+  </div>
+  <div class="auth-panel">
+    <p class="eyebrow">Restricted area</p><h1>Administrator sign in</h1><p class="page-description" style="margin-bottom:20px">Use the owner credentials configured for this service.</p>
+    <form method="post" class="stack">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label>Admin username<input name="username" autocomplete="username" required autofocus></label>
+      <label>Password<input type="password" name="password" autocomplete="current-password" required></label>
+      <button class="button-block" type="submit">Open administration</button>
+    </form>
+    <p class="auth-meta">Administrator access is separate from user accounts</p>
+  </div>
 </section>
 {% endblock %}

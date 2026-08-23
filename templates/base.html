@@ -3,52 +3,21 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#ffffff">
   <title>{% block title %}IssueBot{% endblock %}</title>
-  <style>
-    :root { color-scheme: dark; --bg:#0b0d12; --panel:#141821; --line:#282f3d; --text:#f1f5f9; --muted:#98a2b3; --brand:#8b5cf6; --good:#22c55e; --bad:#ef4444; --warn:#f59e0b; }
-    * { box-sizing:border-box; }
-    body { margin:0; background:linear-gradient(145deg,#0b0d12,#101522); color:var(--text); font:15px/1.5 Inter,Segoe UI,sans-serif; min-height:100vh; }
-    a { color:#b9a6ff; text-decoration:none; } a:hover { text-decoration:underline; }
-    nav { display:flex; align-items:center; justify-content:space-between; gap:20px; padding:16px max(20px,calc((100% - 1120px)/2)); border-bottom:1px solid var(--line); background:rgba(11,13,18,.9); position:sticky; top:0; backdrop-filter:blur(10px); z-index:2; }
-    .brand { font-size:19px; font-weight:800; color:white; }
-    .navlinks { display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
-    .container { width:min(1120px,calc(100% - 32px)); margin:32px auto 70px; }
-    .panel { background:var(--panel); border:1px solid var(--line); border-radius:16px; padding:22px; box-shadow:0 12px 40px rgba(0,0,0,.18); }
-    .grid { display:grid; grid-template-columns:repeat(3,1fr); gap:16px; }
-    .dashboard-grid { grid-template-columns:2fr 1fr; }
-    .stack { display:grid; gap:16px; }
-    .stat { font-size:30px; font-weight:800; }.muted { color:var(--muted); }.small { font-size:13px; }
-    h1,h2,h3 { margin-top:0; } h1 { font-size:28px; } h2 { margin-bottom:14px; font-size:19px; }
-    input,textarea,select { width:100%; background:#0d1118; border:1px solid #343d4d; color:var(--text); border-radius:9px; padding:11px 12px; font:inherit; }
-    textarea { min-height:105px; resize:vertical; } input:focus,textarea:focus { outline:2px solid rgba(139,92,246,.5); border-color:var(--brand); }
-    label { display:grid; gap:7px; color:#d7dce5; font-weight:600; }
-    .field-note { color:var(--muted); font-size:12px; font-weight:400; }
-    button,.button { border:0; border-radius:9px; padding:10px 14px; background:var(--brand); color:white; font-weight:700; cursor:pointer; display:inline-block; }
-    button.secondary,.button.secondary { background:#252c39; } button.danger { background:#7f1d1d; }
-    .inline { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }.inline form { margin:0; }
-    .flash { padding:12px 14px; border-radius:10px; margin-bottom:16px; background:#233047; border:1px solid #3b4c68; overflow-wrap:anywhere; }
-    .flash.error { background:#3a181c; border-color:#7f1d1d; }.flash.success { background:#153322; border-color:#166534; }
-    .issue { display:grid; gap:12px; padding:16px 0; border-top:1px solid var(--line); }.issue:first-child { border-top:0; padding-top:0; }
-    .issue-title { font-size:16px; font-weight:700; color:white; }.meta { display:flex; gap:10px; flex-wrap:wrap; color:var(--muted); font-size:13px; }
-    .badge { border:1px solid #3a4353; border-radius:999px; padding:2px 8px; }.status-good { color:#86efac; }.status-bad { color:#fca5a5; }.status-warn { color:#fcd34d; }
-    table { width:100%; border-collapse:collapse; } th,td { text-align:left; padding:12px 10px; border-bottom:1px solid var(--line); vertical-align:top; }
-    .checkbox { display:flex; grid-template-columns:none; flex-direction:row; align-items:center; gap:10px; }.checkbox input { width:auto; }
-    .auth-shell { width:min(430px,calc(100% - 32px)); margin:9vh auto; }.auth-shell .panel { padding:30px; }
-    .log { padding:9px 0; border-bottom:1px solid var(--line); }.log:last-child { border-bottom:0; }
-    @media(max-width:760px) { .grid,.dashboard-grid { grid-template-columns:1fr; } nav { align-items:flex-start; } table { display:block; overflow-x:auto; } }
-  </style>
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
 </head>
-<body>
+<body class="portal-area">
 {% if current_user %}
-<nav>
-  <a class="brand" href="{{ url_for('user_dashboard') }}">IssueBot</a>
-  <div class="navlinks">
-    <a href="{{ url_for('user_dashboard') }}">Dashboard</a>
-    <a href="{{ url_for('settings') }}">Setup</a>
-    <a href="{{ url_for('account') }}">{{ current_user.username }}</a>
+<header class="topbar"><div class="topbar-inner">
+  <a class="brand" href="{{ url_for('user_dashboard') }}"><span class="brand-mark">IB</span><span>IssueBot</span><span class="brand-context">Wave workspace</span></a>
+  <nav class="navlinks" aria-label="User navigation">
+    <a class="{{ 'active' if request.endpoint == 'user_dashboard' else '' }}" href="{{ url_for('user_dashboard') }}">Dashboard</a>
+    <a class="{{ 'active' if request.endpoint == 'settings' else '' }}" href="{{ url_for('settings') }}">Setup</a>
+    <a class="nav-user {{ 'active' if request.endpoint == 'account' else '' }}" href="{{ url_for('account') }}">{{ current_user.username }}</a>
     <form method="post" action="{{ url_for('logout') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="secondary">Sign out</button></form>
-  </div>
-</nav>
+  </nav>
+</div></header>
 {% endif %}
 <main class="{% block main_class %}container{% endblock %}">
   {% with messages = get_flashed_messages(with_categories=true) %}

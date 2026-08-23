@@ -1,45 +1,47 @@
 {% extends "base.html" %}
+{% block title %}Dashboard · IssueBot{% endblock %}
 {% block content %}
-<div class="inline" style="justify-content:space-between;margin-bottom:20px">
-  <div><h1 style="margin-bottom:4px">Your Drips workspace</h1><div class="muted">Review opportunities and control every application.</div></div>
-  <a class="button secondary" href="{{ url_for('settings') }}">Bot settings</a>
-</div>
+<header class="page-head">
+  <div><p class="eyebrow">Drips Wave</p><h1>Your workspace</h1><p class="page-description">Review opportunities and control every application.</p></div>
+  <a class="button secondary" href="{{ url_for('settings') }}">Configure monitoring</a>
+</header>
 
-<section class="grid" style="margin-bottom:20px">
-  <div class="panel"><div class="stat">{{ candidates|length }}</div><div class="muted">Awaiting review</div></div>
-  <div class="panel"><div class="stat">{{ pending|length }}</div><div class="muted">Pending applications</div></div>
-  <div class="panel"><div class="stat">{{ accepted|length }}</div><div class="muted">Accepted assignments</div></div>
+<section class="grid section-gap" aria-label="Application summary">
+  <div class="panel metric"><div class="stat">{{ candidates|length }}</div><div class="muted small">Awaiting review</div></div>
+  <div class="panel metric"><div class="stat">{{ pending|length }}</div><div class="muted small">Pending applications</div></div>
+  <div class="panel metric"><div class="stat">{{ accepted|length }}</div><div class="muted small">Accepted assignments</div></div>
 </section>
 
-<section class="panel" style="margin-bottom:20px">
-  <div class="inline" style="justify-content:space-between"><h2>Monitoring</h2><span class="badge {{ 'status-good' if settings.enabled and not settings.last_error else 'status-warn' }}">{{ 'Enabled' if settings.enabled else 'Paused' }}</span></div>
-  {% if settings.last_error %}<p class="status-bad">{{ settings.last_error }}</p>{% endif %}
-  <p class="muted small">Last successful scan: {{ settings.last_success_at or 'Not yet run' }}</p>
+<section class="panel section-gap">
+  <div class="monitor-row">
+    <span class="status-dot {{ 'live' if settings.enabled and not settings.last_error else '' }}" aria-hidden="true"></span>
+    <div><strong>Wave monitoring</strong><div class="muted small">Last successful scan: <span class="mono">{{ settings.last_success_at or 'Not yet run' }}</span></div></div>
+    <span class="badge {{ 'status-good' if settings.enabled and not settings.last_error else 'status-warn' }}">{{ 'Enabled' if settings.enabled else 'Paused' }}</span>
+  </div>
+  {% if settings.last_error %}<p class="status-bad small" style="margin:10px 0 0 20px">{{ settings.last_error }}</p>{% endif %}
 </section>
 
 <div class="grid dashboard-grid">
   <section class="panel">
-    <h2>Issue candidates</h2>
+    <div class="panel-title"><h2>Issue candidates</h2><span class="badge">{{ candidates|length }} open</span></div>
     {% for issue in candidates %}
     <article class="issue">
-      <div><a class="issue-title" href="{{ issue.url }}" target="_blank" rel="noopener">{{ issue.title }}</a><div class="meta"><span>{{ issue.repo }}</span>{% if issue.points %}<span class="badge">{{ issue.points }} points</span>{% endif %}</div></div>
+      <div><a class="issue-title" href="{{ issue.url }}" target="_blank" rel="noopener">{{ issue.title }}</a><div class="meta"><span>{{ issue.repo }}</span>{% if issue.points %}<span>{{ issue.points }} points</span>{% endif %}</div></div>
       <form method="post" action="{{ url_for('approve_issue', record_id=issue.id) }}" class="stack">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <label>Application message<textarea name="application_text" maxlength="1000" required>{{ issue.application_text }}</textarea></label>
         <div class="inline"><button type="submit">Approve and apply</button></div>
       </form>
-      <form method="post" action="{{ url_for('dismiss_issue', record_id=issue.id) }}">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="secondary" type="submit">Dismiss</button>
-      </form>
+      <form method="post" action="{{ url_for('dismiss_issue', record_id=issue.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="secondary" type="submit">Dismiss</button></form>
     </article>
-    {% else %}<p class="muted">No candidates yet. Enable monitoring in Settings.</p>{% endfor %}
+    {% else %}<div class="empty">No candidates yet. Enable monitoring in Setup.</div>{% endfor %}
   </section>
 
   <aside class="stack">
-    <section class="panel"><h2>Pending</h2>{% for issue in pending %}<div class="issue"><a href="{{ issue.url }}" target="_blank" rel="noopener">{{ issue.title }}</a><div class="muted small">{{ issue.repo }}</div></div>{% else %}<p class="muted">None</p>{% endfor %}</section>
-    <section class="panel"><h2>Accepted</h2>{% for issue in accepted %}<div class="issue"><a href="{{ issue.url }}" target="_blank" rel="noopener">{{ issue.title }}</a><div class="muted small">{{ issue.repo }}</div></div>{% else %}<p class="muted">None</p>{% endfor %}</section>
+    <section class="panel"><div class="panel-title"><h2>Pending</h2><span class="badge">{{ pending|length }}</span></div>{% for issue in pending %}<div class="issue"><a class="issue-title" href="{{ issue.url }}" target="_blank" rel="noopener">{{ issue.title }}</a><div class="meta">{{ issue.repo }}</div></div>{% else %}<div class="empty">No pending applications</div>{% endfor %}</section>
+    <section class="panel"><div class="panel-title"><h2>Accepted</h2><span class="badge status-good">{{ accepted|length }}</span></div>{% for issue in accepted %}<div class="issue"><a class="issue-title" href="{{ issue.url }}" target="_blank" rel="noopener">{{ issue.title }}</a><div class="meta">{{ issue.repo }}</div></div>{% else %}<div class="empty">No accepted assignments</div>{% endfor %}</section>
   </aside>
 </div>
 
-<section class="panel" style="margin-top:20px"><h2>Activity</h2>{% for item in logs %}<div class="log"><span class="{{ 'status-bad' if item.level == 'error' else '' }}">{{ item.message }}</span><div class="muted small">{{ item.created_at }}</div></div>{% else %}<p class="muted">No activity recorded.</p>{% endfor %}</section>
+<section class="panel" style="margin-top:14px"><div class="panel-title"><h2>Activity</h2><span class="muted small">Latest 30 events</span></div>{% for item in logs %}<div class="log"><span class="{{ 'status-bad' if item.level == 'error' else '' }}">{{ item.message }}</span><time class="muted mono">{{ item.created_at }}</time></div>{% else %}<div class="empty">No activity recorded</div>{% endfor %}</section>
 {% endblock %}
