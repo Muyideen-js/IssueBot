@@ -108,8 +108,10 @@ def create_app(test_config: dict | None = None) -> Flask:
 
         return wrapped
 
-    @app.get("/health")
+    @app.route("/health", methods=["GET", "HEAD"])
     def health():
+        if request.method == "HEAD":
+            return "", 204
         return {"ok": True}
 
     @app.route("/login", methods=["GET", "POST"])
@@ -198,8 +200,10 @@ def create_app(test_config: dict | None = None) -> Flask:
                 return redirect(url_for("user_dashboard"))
         return render_template("account.html")
 
-    @app.get("/")
+    @app.route("/", methods=["GET", "HEAD"])
     def index():
+        if request.method == "HEAD":
+            return "", 204
         if not g.user:
             return redirect(url_for("login"))
         return redirect(url_for("admin_dashboard" if g.user.is_admin else "user_dashboard"))

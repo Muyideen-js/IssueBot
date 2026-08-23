@@ -190,6 +190,14 @@ class PortalTestCase(unittest.TestCase):
         response = self.client.post("/settings", data={})
         self.assertEqual(response.status_code, 400)
 
+    def test_uptime_head_requests_succeed_without_redirects(self):
+        root = self.client.head("/")
+        health = self.client.head("/health")
+        self.assertEqual(root.status_code, 204)
+        self.assertEqual(health.status_code, 204)
+        self.assertEqual(root.data, b"")
+        self.assertEqual(health.data, b"")
+
     def test_user_ai_keys_are_encrypted_and_never_rendered(self):
         with SessionLocal() as db:
             user = User(username="ai-user", must_change_password=False)
