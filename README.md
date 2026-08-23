@@ -82,9 +82,9 @@ Give users only `dist\issuebot-connector.exe` and your HTTPS portal URL.
 
 ## Render deployment
 
-`render.yaml` provisions a free PostgreSQL database and a free Flask web service. The monitoring process runs beside the website in that single service. Before deploying, configure `CREDENTIAL_ENCRYPTION_KEY`, `ADMIN_USERNAME`, and `ADMIN_PASSWORD`.
+`render.yaml` provisions a free Flask web service that connects to an external Neon PostgreSQL database. The monitoring process runs beside the website in that single service. Before deploying, configure `DATABASE_URL`, `CREDENTIAL_ENCRYPTION_KEY`, `ADMIN_USERNAME`, and `ADMIN_PASSWORD`.
 
-This free setup is suitable for testing, not dependable 24/7 monitoring: the web service sleeps after inactivity, monitoring pauses while it sleeps, and Render's free PostgreSQL database expires after 30 days. Upgrade to separate paid web, database, and worker services for continuous production use.
+This free setup is suitable for testing, not dependable 24/7 monitoring: the Render web service sleeps after inactivity and monitoring pauses while it sleeps. Neon persists the relational data independently and wakes its compute when queried. Upgrade to separate paid web and worker services for continuous monitoring.
 
 Render generates `APP_SECRET`. The connected repository should remain private. Official references: [Blueprint specification](https://render.com/docs/blueprint-spec), [background workers](https://render.com/docs/background-workers).
 

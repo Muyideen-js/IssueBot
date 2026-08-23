@@ -1,9 +1,3 @@
-databases:
-  - name: issuebot-db
-    region: frankfurt
-    plan: free
-    ipAllowList: []
-
 services:
   - type: web
     name: issuebot-web
@@ -17,9 +11,7 @@ services:
       - key: APP_ENV
         value: production
       - key: DATABASE_URL
-        fromDatabase:
-          name: issuebot-db
-          property: connectionString
+        sync: false
       - key: APP_SECRET
         generateValue: true
       - key: CREDENTIAL_ENCRYPTION_KEY
