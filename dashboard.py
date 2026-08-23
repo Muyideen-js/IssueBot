@@ -63,6 +63,10 @@ def create_app(test_config: dict | None = None) -> Flask:
             expected = session.get("csrf_token", "")
             supplied = request.form.get("csrf_token") or request.headers.get("X-CSRF-Token", "")
             if not expected or not secrets.compare_digest(expected, supplied):
+                if request.endpoint in {"login", "admin_login"}:
+                    session.clear()
+                    flash("Your sign-in page expired. Please sign in again.", "error")
+                    return redirect(request.path)
                 abort(400, "Invalid CSRF token")
 
     @app.teardown_request

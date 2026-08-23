@@ -186,8 +186,21 @@ class PortalTestCase(unittest.TestCase):
         self.assertEqual(response.status_code, 404)
 
     def test_post_without_csrf_is_rejected(self):
-        response = self.client.post("/login", data={"username": "admin", "password": "x"})
+        response = self.client.post("/settings", data={})
         self.assertEqual(response.status_code, 400)
+
+    def test_expired_login_form_recovers_with_fresh_page(self):
+        stale_token = self.csrf("/login")
+        with self.client.session_transaction() as browser_session:
+            browser_session.clear()
+        response = self.client.post(
+            "/login",
+            data={"csrf_token": stale_token, "username": "someone", "password": "invalid"},
+            follow_redirects=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Your sign-in page expired", response.data)
+        self.assertIn(b"Welcome back", response.data)
 
     def test_worker_creates_candidates_for_only_the_selected_user(self):
         with SessionLocal() as db:
