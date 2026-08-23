@@ -82,7 +82,9 @@ Give users only `dist\issuebot-connector.exe` and your HTTPS portal URL.
 
 ## Render deployment
 
-`render.yaml` provisions a private PostgreSQL database, a public Flask web service, and a private background worker. Before deploying, configure `CREDENTIAL_ENCRYPTION_KEY`, `ADMIN_USERNAME`, and `ADMIN_PASSWORD`.
+`render.yaml` provisions a free PostgreSQL database and a free Flask web service. The monitoring process runs beside the website in that single service. Before deploying, configure `CREDENTIAL_ENCRYPTION_KEY`, `ADMIN_USERNAME`, and `ADMIN_PASSWORD`.
+
+This free setup is suitable for testing, not dependable 24/7 monitoring: the web service sleeps after inactivity, monitoring pauses while it sleeps, and Render's free PostgreSQL database expires after 30 days. Upgrade to separate paid web, database, and worker services for continuous production use.
 
 Render generates `APP_SECRET`. The connected repository should remain private. Official references: [Blueprint specification](https://render.com/docs/blueprint-spec), [background workers](https://render.com/docs/background-workers).
 
