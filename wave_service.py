@@ -1,5 +1,6 @@
 import base64
 import json
+from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urlparse
@@ -16,10 +17,16 @@ class WaveError(RuntimeError):
 
 
 class WaveClient:
-    def __init__(self, session_state: dict[str, Any], timeout: int = 20):
+    def __init__(
+        self,
+        session_state: dict[str, Any],
+        timeout: int = 20,
+        on_refresh: Callable[[dict[str, Any]], None] | None = None,
+    ):
         self.session_state = session_state
         self.timeout = timeout
         self.http = requests.Session()
+        self.on_refresh = on_refresh
 
     def _cookie(self, name: str) -> str:
         for cookie in self.session_state.get("cookies", []):
@@ -90,6 +97,8 @@ class WaveClient:
             raise WaveError("Drips returned no access token")
         self._sync_response_cookies(response)
         self._set_cookie("wave_access_token", access, datetime.now(timezone.utc).timestamp() + 900)
+        if self.on_refresh:
+            self.on_refresh(self.session_state)
         return access, True
 
     def _headers(self, token: str) -> dict[str, str]:

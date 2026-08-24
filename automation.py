@@ -106,7 +106,12 @@ def run_user_cycle(db, user: User, settings: BotSettings) -> None:
         raw_session = decrypt_secret(settings.drips_session_encrypted)
         if not raw_session:
             raise WaveError("Connect a Drips session before enabling monitoring")
-        client = WaveClient(json.loads(raw_session))
+
+        def _persist_session(session_state: dict) -> None:
+            settings.drips_session_encrypted = encrypt_secret(json.dumps(session_state))
+            db.commit()
+
+        client = WaveClient(json.loads(raw_session), on_refresh=_persist_session)
         pending, session_changed = client.fetch_applications("pending")
         accepted, accepted_changed = client.fetch_applications("accepted")
         issues, issues_changed = client.fetch_open_issues()
