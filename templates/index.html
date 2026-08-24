@@ -24,12 +24,45 @@
 <div class="grid dashboard-grid">
   <section class="panel">
     <div class="panel-title"><h2>Automatic queue</h2><span class="badge">{{ candidates|length }} waiting</span></div>
-    {% for issue in candidates %}
-    <article class="issue">
-      <div><a class="issue-title" href="{{ issue.url }}" target="_blank" rel="noopener">{{ issue.title }}</a><div class="meta"><span>{{ issue.repo }}</span>{% if issue.points %}<span>{{ issue.points }} points</span>{% endif %}</div></div>
-      <p class="muted small">Waiting for an available slot or repository allowance. No manual approval is required.</p>
-    </article>
-    {% else %}<div class="empty">No queued opportunities. IssueBot will apply when new matching issues appear.</div>{% endfor %}
+    {% if candidates %}
+      {% for issue in candidates[:10] %}
+      <article class="issue" {% if loop.first %}id="queue-top"{% endif %}>
+        <div><a class="issue-title" href="{{ issue.url }}" target="_blank" rel="noopener">{{ issue.title }}</a><div class="meta"><span>{{ issue.repo }}</span>{% if issue.points %}<span>{{ issue.points }} points</span>{% endif %}</div></div>
+        <p class="muted small">Waiting for an available slot or repository allowance.</p>
+      </article>
+      {% endfor %}
+      {% if candidates|length > 10 %}
+      <div id="queue-more" style="display:none">
+        {% for issue in candidates[10:] %}
+        <article class="issue">
+          <div><a class="issue-title" href="{{ issue.url }}" target="_blank" rel="noopener">{{ issue.title }}</a><div class="meta"><span>{{ issue.repo }}</span>{% if issue.points %}<span>{{ issue.points }} points</span>{% endif %}</div></div>
+          <p class="muted small">Waiting for an available slot or repository allowance.</p>
+        </article>
+        {% endfor %}
+      </div>
+      <div style="text-align:center;padding:12px 0">
+        <button id="show-more-btn" class="button secondary" onclick="toggleQueue()">
+          Show {{ candidates|length - 10 }} more opportunities
+        </button>
+      </div>
+      <script>
+      function toggleQueue() {
+        var more = document.getElementById("queue-more");
+        var btn  = document.getElementById("show-more-btn");
+        if (more.style.display === "none") {
+          more.style.display = "block";
+          btn.textContent = "Show less";
+        } else {
+          more.style.display = "none";
+          btn.textContent = "Show {{ candidates|length - 10 }} more opportunities";
+          document.getElementById("queue-top").scrollIntoView({behavior:"smooth"});
+        }
+      }
+      </script>
+      {% endif %}
+    {% else %}
+      <div class="empty">No queued opportunities. IssueBot will apply when new matching issues appear.</div>
+    {% endif %}
   </section>
 
   <aside class="stack">
