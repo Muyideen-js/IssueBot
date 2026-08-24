@@ -43,6 +43,20 @@ class WaveClient:
             "sameSite": "Lax",
         })
 
+    def _sync_response_cookies(self, response: requests.Response) -> bool:
+        """Persist rotated auth cookies returned by the Wave API."""
+        changed = False
+        for response_cookie in response.cookies:
+            name = response_cookie.name
+            value = response_cookie.value
+            if not name or not value:
+                continue
+            existing = self._cookie(name)
+            expires = float(response_cookie.expires or 0)
+            self._set_cookie(name, value, expires)
+            changed = changed or existing != value
+        return changed
+
     @staticmethod
     def _token_is_valid(token: str) -> bool:
         try:
@@ -63,9 +77,8 @@ class WaveClient:
             raise WaveError("Drips session has expired; reconnect the account")
 
         response = self.http.post(
-            f"{WAVE_API}/auth/refresh",
-            json={"refreshToken": refresh},
-            headers={"content-type": "application/json"},
+            f"{WAVE_API}/auth/token/refresh",
+            headers=self._headers(access),
             timeout=self.timeout,
         )
         if response.status_code != 200:
@@ -75,6 +88,7 @@ class WaveClient:
         access = data.get("accessToken") or data.get("access_token") or data.get("token") or ""
         if not access:
             raise WaveError("Drips returned no access token")
+        self._sync_response_cookies(response)
         self._set_cookie("wave_access_token", access, datetime.now(timezone.utc).timestamp() + 900)
         return access, True
 
@@ -104,17 +118,18 @@ class WaveClient:
 
     def fetch_applications(self, status: str) -> tuple[list[dict[str, Any]], bool]:
         token, changed = self.ensure_token()
-        urls = [f"{WAVE_API}/user/applications?waveProgramId={WAVE_PROGRAM_ID}&status={status}&limit=50"]
-        errors = []
-        for url in urls:
-            try:
-                response = self.http.get(url, headers=self._headers(token), timeout=self.timeout)
-                if response.status_code == 200:
-                    return self._items(response.json()), changed
-                errors.append(str(response.status_code))
-            except requests.RequestException as exc:
-                errors.append(type(exc).__name__)
-        raise WaveError(f"Could not verify {status} applications ({', '.join(errors)})")
+        response = self.http.get(
+            f"{WAVE_API}/wave-programs/{WAVE_PROGRAM_ID}/quotas/applications/details",
+            headers=self._headers(token),
+            timeout=self.timeout,
+        )
+        if response.status_code != 200:
+            raise WaveError(f"Could not verify {status} applications (HTTP {response.status_code})")
+        payload = response.json()
+        if isinstance(payload, dict) and isinstance(payload.get("data"), dict):
+            payload = payload["data"]
+        applications = payload.get("applications", []) if isinstance(payload, dict) else []
+        return [app for app in applications if app.get("status") == status], changed
 
     def fetch_open_issues(self) -> tuple[list[dict[str, Any]], bool]:
         token, changed = self.ensure_token()
@@ -154,9 +169,9 @@ class WaveClient:
         issue_id = str(application.get("issueId") or issue.get("id") or "")
         if not application_id or not issue_id:
             return False, "Drips application is missing its application or issue ID", changed
-        response = self.http.delete(
+        response = self.http.post(
             f"{WAVE_API}/wave-programs/{WAVE_PROGRAM_ID}/issues/"
-            f"{issue_id}/applications/{application_id}",
+            f"{issue_id}/applications/{application_id}/withdraw",
             headers=self._headers(token),
             timeout=self.timeout,
         )
@@ -173,7 +188,12 @@ class WaveClient:
 def issue_repo(issue: dict[str, Any]) -> str:
     repo = issue.get("repo") or issue.get("repository") or ""
     if isinstance(repo, dict):
-        return repo.get("fullName") or repo.get("full_name") or ""
+        return (
+            repo.get("gitHubRepoFullName")
+            or repo.get("fullName")
+            or repo.get("full_name")
+            or ""
+        )
     for field in ("gitHubIssueUrl", "htmlUrl", "html_url"):
         url = issue.get(field) or ""
         if "github.com/" in url:
@@ -191,6 +211,10 @@ def issue_url(issue: dict[str, Any]) -> str:
             return str(raw)
     except ValueError:
         pass
+    repo = issue_repo(issue)
+    number = issue.get("gitHubIssueNumber")
+    if repo and number:
+        return f"https://github.com/{repo}/issues/{number}"
     return ""
 
 
