@@ -1,6 +1,6 @@
 from unittest.mock import Mock
 
-from wave_service import WAVE_API, WAVE_PROGRAM_ID, WaveClient, issue_repo, issue_url
+from wave_service import WAVE_API, WAVE_PROGRAM_ID, WaveClient, WaveError, issue_repo, issue_url
 
 
 def test_withdraw_uses_confirmed_application_and_issue_ids():
@@ -50,6 +50,57 @@ def test_refresh_uses_current_cookie_endpoint_and_saves_rotated_cookie():
     assert url == f"{WAVE_API}/auth/token/refresh"
     assert client.http.post.call_args.kwargs.get("json") is None
     assert "wave_refresh_token=old-refresh" in client.http.post.call_args.kwargs["headers"]["cookie"]
+
+
+def test_refresh_does_not_send_the_expired_access_token_as_auth():
+    state = {"cookies": [
+        {"name": "wave_access_token", "value": "expired", "domain": ".drips.network"},
+        {"name": "wave_refresh_token", "value": "old-refresh", "domain": ".drips.network"},
+    ]}
+    client = WaveClient(state)
+    response = Mock(status_code=200)
+    response.json.return_value = {"accessToken": "new-access"}
+    response.cookies = []
+    client.http.post = Mock(return_value=response)
+
+    client.ensure_token()
+
+    headers = client.http.post.call_args.kwargs["headers"]
+    assert "authorization" not in headers
+
+
+def test_refresh_captures_a_rotated_refresh_token_from_the_response_body():
+    state = {"cookies": [
+        {"name": "wave_access_token", "value": "expired", "domain": ".drips.network"},
+        {"name": "wave_refresh_token", "value": "old-refresh", "domain": ".drips.network"},
+    ]}
+    client = WaveClient(state)
+    response = Mock(status_code=200)
+    response.json.return_value = {"accessToken": "new-access", "refreshToken": "new-refresh"}
+    response.cookies = []
+    client.http.post = Mock(return_value=response)
+
+    client.ensure_token()
+
+    assert client._cookie("wave_refresh_token") == "new-refresh"
+
+
+def test_refresh_failure_message_includes_status_and_body_detail():
+    state = {"cookies": [
+        {"name": "wave_access_token", "value": "expired", "domain": ".drips.network"},
+        {"name": "wave_refresh_token", "value": "old-refresh", "domain": ".drips.network"},
+    ]}
+    client = WaveClient(state)
+    response = Mock(status_code=401)
+    response.json.return_value = {"error": "invalid_grant"}
+    client.http.post = Mock(return_value=response)
+
+    try:
+        client.ensure_token()
+        assert False, "expected WaveError"
+    except WaveError as exc:
+        assert "401" in str(exc)
+        assert "invalid_grant" in str(exc)
 
 
 def test_fetch_applications_uses_quota_details_and_filters_status():

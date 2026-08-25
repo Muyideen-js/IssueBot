@@ -65,14 +65,28 @@ class WaveClient:
         return changed
 
     @staticmethod
-    def _token_is_valid(token: str) -> bool:
+    def _token_exp(token: str) -> float | None:
         try:
             payload_part = token.split(".")[1]
             padding = "=" * (-len(payload_part) % 4)
             payload = json.loads(base64.urlsafe_b64decode(payload_part + padding))
-            return float(payload.get("exp", 0)) - datetime.now(timezone.utc).timestamp() > 60
+            exp = payload.get("exp")
+            return float(exp) if exp else None
         except Exception:
-            return False
+            return None
+
+    @classmethod
+    def _token_is_valid(cls, token: str) -> bool:
+        exp = cls._token_exp(token)
+        return exp is not None and exp - datetime.now(timezone.utc).timestamp() > 60
+
+    @staticmethod
+    def _error_detail(response: requests.Response) -> str:
+        try:
+            payload = response.json()
+            return str(payload.get("error") or payload.get("message") or payload)[:300]
+        except Exception:
+            return response.text[:300]
 
     def ensure_token(self) -> tuple[str, bool]:
         access = self._cookie("wave_access_token")
@@ -83,38 +97,56 @@ class WaveClient:
         if not refresh:
             raise WaveError("Drips session has expired; reconnect the account")
 
+        # Never present the already-expired access token as auth on the refresh call
+        # itself: if Drips' API gateway validates the Authorization header before
+        # routing to /auth/token/refresh, a stale Bearer token can reject the refresh
+        # even though the refresh cookie below is still perfectly valid.
         response = self.http.post(
             f"{WAVE_API}/auth/token/refresh",
-            headers=self._headers(access),
+            headers=self._headers(),
             timeout=self.timeout,
         )
         if response.status_code != 200:
-            raise WaveError("Drips session refresh failed; reconnect the account")
+            raise WaveError(
+                f"Drips session refresh failed (HTTP {response.status_code}): "
+                f"{self._error_detail(response)}"
+            )
 
         data = response.json()
         access = data.get("accessToken") or data.get("access_token") or data.get("token") or ""
         if not access:
             raise WaveError("Drips returned no access token")
         self._sync_response_cookies(response)
+        # Some refresh flows rotate the refresh token itself and return the new one
+        # in the body rather than a Set-Cookie header; without capturing it here the
+        # next refresh would reuse an already-invalidated refresh token and fail.
+        rotated_refresh = data.get("refreshToken") or data.get("refresh_token")
+        if rotated_refresh:
+            expires = self._token_exp(rotated_refresh) or (
+                datetime.now(timezone.utc).timestamp() + 30 * 24 * 3600
+            )
+            self._set_cookie("wave_refresh_token", rotated_refresh, expires)
         self._set_cookie("wave_access_token", access, datetime.now(timezone.utc).timestamp() + 900)
         if self.on_refresh:
             self.on_refresh(self.session_state)
         return access, True
 
-    def _headers(self, token: str) -> dict[str, str]:
+    def _headers(self, token: str = "") -> dict[str, str]:
         cookies = "; ".join(
             f"{cookie.get('name')}={cookie.get('value')}"
             for cookie in self.session_state.get("cookies", [])
             if cookie.get("name") and cookie.get("value")
         )
-        return {
-            "authorization": f"Bearer {token}",
+        headers = {
             "content-type": "application/json",
             "cookie": cookies,
             "referer": "https://www.drips.network/",
             "user-agent": "IssueBot/1.0",
             "x-timezone": "Africa/Lagos",
         }
+        if token:
+            headers["authorization"] = f"Bearer {token}"
+        return headers
 
     @staticmethod
     def _items(data: Any) -> list[dict[str, Any]]:
