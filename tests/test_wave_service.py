@@ -69,6 +69,26 @@ def test_refresh_does_not_send_the_expired_access_token_as_auth():
     assert "authorization" not in headers
 
 
+def test_refresh_excludes_the_stale_access_token_cookie():
+    state = {"cookies": [
+        {"name": "wave_access_token", "value": "expired", "domain": ".drips.network"},
+        {"name": "wave_refresh_token", "value": "old-refresh", "domain": ".drips.network"},
+        {"name": "session_id", "value": "keep-me", "domain": ".drips.network"},
+    ]}
+    client = WaveClient(state)
+    response = Mock(status_code=200)
+    response.json.return_value = {"accessToken": "new-access"}
+    response.cookies = []
+    client.http.post = Mock(return_value=response)
+
+    client.ensure_token()
+
+    cookie_header = client.http.post.call_args.kwargs["headers"]["cookie"]
+    assert "wave_access_token" not in cookie_header
+    assert "wave_refresh_token=old-refresh" in cookie_header
+    assert "session_id=keep-me" in cookie_header
+
+
 def test_refresh_captures_a_rotated_refresh_token_from_the_response_body():
     state = {"cookies": [
         {"name": "wave_access_token", "value": "expired", "domain": ".drips.network"},

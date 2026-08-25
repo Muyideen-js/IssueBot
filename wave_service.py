@@ -98,12 +98,13 @@ class WaveClient:
             raise WaveError("Drips session has expired; reconnect the account")
 
         # Never present the already-expired access token as auth on the refresh call
-        # itself: if Drips' API gateway validates the Authorization header before
-        # routing to /auth/token/refresh, a stale Bearer token can reject the refresh
-        # even though the refresh cookie below is still perfectly valid.
+        # itself: Drips' refresh endpoint validates any wave_access_token it's given
+        # (via the Authorization header or the cookie jar) and rejects the whole
+        # request as "Invalid access token" if it's expired, even though the
+        # refresh cookie alone should be sufficient to prove the session.
         response = self.http.post(
             f"{WAVE_API}/auth/token/refresh",
-            headers=self._headers(),
+            headers=self._headers(exclude_cookies=("wave_access_token",)),
             timeout=self.timeout,
         )
         if response.status_code != 200:
@@ -131,11 +132,11 @@ class WaveClient:
             self.on_refresh(self.session_state)
         return access, True
 
-    def _headers(self, token: str = "") -> dict[str, str]:
+    def _headers(self, token: str = "", exclude_cookies: tuple[str, ...] = ()) -> dict[str, str]:
         cookies = "; ".join(
             f"{cookie.get('name')}={cookie.get('value')}"
             for cookie in self.session_state.get("cookies", [])
-            if cookie.get("name") and cookie.get("value")
+            if cookie.get("name") and cookie.get("value") and cookie.get("name") not in exclude_cookies
         )
         headers = {
             "content-type": "application/json",
