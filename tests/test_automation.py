@@ -1,4 +1,10 @@
-from automation import _add_priority_repo, _is_priority_repo, _priority_names, _rank_issues
+from automation import (
+    _add_priority_repo,
+    _is_blocked_repo,
+    _is_priority_repo,
+    _priority_names,
+    _rank_issues,
+)
 
 
 def test_priority_owner_matches_every_repository_owned_by_it():
@@ -31,3 +37,24 @@ def test_accepted_repository_can_be_promoted_to_priority_list():
     assert _add_priority_repo(settings, "new-owner/new-repo") is True
     assert "new-owner/new-repo" in settings.priority_repos
     assert _add_priority_repo(settings, "new-owner/new-repo") is False
+
+
+def test_tansu_repository_is_always_blocked_case_insensitively():
+    assert _is_blocked_repo("Consulting-Manao/tansu")
+    assert _is_blocked_repo("consulting-manao/TANSU")
+    assert not _is_blocked_repo("Consulting-Manao/another-repo")
+
+
+def test_blocked_repository_is_removed_before_ranking():
+    issues = [
+        {"id": "blocked", "repository": {"fullName": "Consulting-Manao/tansu"}},
+        {"id": "allowed", "repository": {"fullName": "another/repo"}},
+    ]
+    ranked = _rank_issues(issues, {"consulting-manao"})
+    assert [issue["id"] for issue in ranked] == ["allowed"]
+
+
+def test_blocked_repository_cannot_be_added_to_priorities():
+    settings = type("Settings", (), {"priority_repos": "Fluxora-Org"})()
+    assert _add_priority_repo(settings, "Consulting-Manao/tansu") is False
+    assert "Consulting-Manao/tansu" not in settings.priority_repos

@@ -88,6 +88,9 @@ def _add_automation_columns() -> None:
             "priority_repos": (
                 "TEXT NOT NULL DEFAULT 'Fluxora-Org\nTalenttrust\nChronopay'"
             ),
+            "gemini_model": "VARCHAR(80) NOT NULL DEFAULT ''",
+            "deepseek_model": "VARCHAR(80) NOT NULL DEFAULT ''",
+            "openai_model": "VARCHAR(80) NOT NULL DEFAULT ''",
         },
         "issue_records": {
             "application_id": "VARCHAR(120) NOT NULL DEFAULT ''",

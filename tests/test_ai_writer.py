@@ -36,3 +36,46 @@ def test_provider_failure_falls_through_to_next_connected_provider():
         )
     assert provider == "deepseek"
     assert "retry guard" in message
+
+
+def test_selected_gemini_model_is_sent_to_gemini():
+    succeeded = Mock(status_code=200)
+    succeeded.json.return_value = {
+        "candidates": [{"content": {"parts": [{"text": "I can add the requested tests."}]}}]
+    }
+    with patch("ai_writer.requests.post", return_value=succeeded) as post:
+        message, provider = generate_application_message(
+            {"title": "Add tests"},
+            "owner/repo",
+            {"gemini": "g-key"},
+            "gemini",
+            "Fallback",
+            {"gemini": "gemini-custom-model"},
+        )
+    assert provider == "gemini"
+    assert "requested tests" in message
+    assert "/models/gemini-custom-model:generateContent" in post.call_args.args[0]
+
+
+def test_selected_deepseek_and_openai_models_are_sent_in_payloads():
+    deepseek_response = Mock(status_code=200)
+    deepseek_response.json.return_value = {
+        "choices": [{"message": {"content": "I can implement this safely."}}]
+    }
+    with patch("ai_writer.requests.post", return_value=deepseek_response) as post:
+        _, provider = generate_application_message(
+            {"title": "Fix bug"}, "owner/repo", {"deepseek": "d-key"},
+            "deepseek", "Fallback", {"deepseek": "deepseek-custom-model"},
+        )
+    assert provider == "deepseek"
+    assert post.call_args.kwargs["json"]["model"] == "deepseek-custom-model"
+
+    openai_response = Mock(status_code=200)
+    openai_response.json.return_value = {"output_text": "I can implement this safely."}
+    with patch("ai_writer.requests.post", return_value=openai_response) as post:
+        _, provider = generate_application_message(
+            {"title": "Fix bug"}, "owner/repo", {"openai": "o-key"},
+            "openai", "Fallback", {"openai": "openai-custom-model"},
+        )
+    assert provider == "openai"
+    assert post.call_args.kwargs["json"]["model"] == "openai-custom-model"

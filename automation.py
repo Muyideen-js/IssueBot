@@ -13,6 +13,9 @@ from security import decrypt_secret, encrypt_secret
 from wave_service import WaveClient, WaveError, issue_points, issue_repo, issue_url
 
 
+BLOCKED_REPOSITORIES = frozenset({"consulting-manao/tansu"})
+
+
 def log_activity(db, user_id: int, message: str, level: str = "info") -> None:
     db.add(ActivityLog(user_id=user_id, message=message[:1000], level=level))
 
@@ -35,9 +38,17 @@ def _is_priority_repo(repo: str, priorities: set[str]) -> bool:
     return normalized in priorities or owner in priorities
 
 
+def _is_blocked_repo(repo: str) -> bool:
+    return (repo or "").strip().lower() in BLOCKED_REPOSITORIES
+
+
 def _add_priority_repo(settings: BotSettings, repo: str) -> bool:
     normalized = (repo or "").strip()
-    if not normalized or _is_priority_repo(normalized, _priority_names(settings.priority_repos)):
+    if (
+        not normalized
+        or _is_blocked_repo(normalized)
+        or _is_priority_repo(normalized, _priority_names(settings.priority_repos))
+    ):
         return False
     values = [value.strip() for value in re.split(r"[,\n]", settings.priority_repos or "") if value.strip()]
     settings.priority_repos = "\n".join([*values, normalized])
@@ -71,6 +82,14 @@ def _provider_keys(settings: BotSettings) -> dict[str, str]:
     }
 
 
+def _provider_models(settings: BotSettings) -> dict[str, str]:
+    return {
+        "gemini": settings.gemini_model,
+        "deepseek": settings.deepseek_model,
+        "openai": settings.openai_model,
+    }
+
+
 def _find_preemption_victim(
     pending: list[dict], priorities: set[str], by_issue: dict[str, IssueRecord], now: datetime
 ) -> dict | None:
@@ -87,7 +106,7 @@ def _find_preemption_victim(
 
 def _rank_issues(issues: list[dict], priorities: set[str]) -> list[dict]:
     newest_first = sorted(
-        issues,
+        [issue for issue in issues if not _is_blocked_repo(issue_repo(issue))],
         key=lambda issue: str(issue.get("updatedAt") or issue.get("createdAt") or ""),
         reverse=True,
     )
@@ -186,6 +205,8 @@ def run_user_cycle(db, user: User, settings: BotSettings) -> None:
         available = []
         current_pending_ids = {_issue_id(_application_issue(app)) for app in pending}
         for issue in issues:
+            if _is_blocked_repo(issue_repo(issue)):
+                continue
             issue_id = _issue_id(issue)
             if not issue_id or issue_id in accepted_ids or issue_id in current_pending_ids:
                 continue
@@ -208,10 +229,13 @@ def run_user_cycle(db, user: User, settings: BotSettings) -> None:
             available.append(issue)
 
         provider_keys = _provider_keys(settings)
+        provider_models = _provider_models(settings)
         applied = 0
         repo_counts = Counter(issue_repo(_application_issue(app)).lower() for app in pending)
         for issue in _rank_issues(available, priorities):
             repo = issue_repo(issue)
+            if _is_blocked_repo(repo):
+                continue
             repo_key = repo.lower()
             if repo_counts[repo_key] >= settings.max_per_repo:
                 continue
@@ -235,7 +259,8 @@ def run_user_cycle(db, user: User, settings: BotSettings) -> None:
                     by_issue[victim_id].status = "preempted"
                 log_activity(db, user.id, f"Withdrew a non-priority application for {repo}")
             message, provider = generate_application_message(
-                issue, repo, provider_keys, settings.preferred_ai_provider, settings.fallback_message
+                issue, repo, provider_keys, settings.preferred_ai_provider, settings.fallback_message,
+                provider_models,
             )
             ok, detail, changed = client.apply(_issue_id(issue), message)
             session_changed = session_changed or changed

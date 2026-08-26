@@ -21,7 +21,8 @@ from flask import (
 )
 from sqlalchemy import delete, desc, select
 
-from ai_writer import PROVIDERS, test_provider
+from ai_writer import DEFAULT_MODELS, PROVIDERS, SUGGESTED_MODELS, test_provider
+from automation import BLOCKED_REPOSITORIES
 from database import SessionLocal, init_db
 from models import ActivityLog, BotSettings, EnrollmentToken, IssueRecord, User, utcnow
 from security import decrypt_secret, encrypt_secret
@@ -232,6 +233,26 @@ def create_app(test_config: dict | None = None) -> Flask:
             settings=settings,
         )
 
+    @app.post("/dashboard/disconnect-session")
+    @user_required
+    def disconnect_drips_session():
+        bot_settings = get_or_create_settings(g.db, g.user.id)
+        bot_settings.drips_session_encrypted = ""
+        bot_settings.enabled = False
+        bot_settings.last_error = ""
+        g.db.add(ActivityLog(user_id=g.user.id, message="Drips session disconnected."))
+        g.db.commit()
+        flash("Drips session disconnected and automation paused.", "success")
+        return redirect(url_for("user_dashboard"))
+
+    @app.post("/dashboard/clear-logs")
+    @user_required
+    def clear_activity_logs():
+        g.db.execute(delete(ActivityLog).where(ActivityLog.user_id == g.user.id))
+        g.db.commit()
+        flash("Activity logs cleared.", "success")
+        return redirect(url_for("user_dashboard"))
+
     @app.route("/settings", methods=["GET", "POST"])
     @user_required
     def settings():
@@ -275,6 +296,10 @@ def create_app(test_config: dict | None = None) -> Flask:
                         setattr(bot_settings, encrypted_field, encrypt_secret(api_key))
                     if request.form.get(f"clear_{provider}_api_key") == "yes":
                         setattr(bot_settings, encrypted_field, "")
+                    model = request.form.get(f"{provider}_model", "").strip()
+                    if len(model) > 80:
+                        raise ValueError(f"{provider.title()} model name is too long")
+                    setattr(bot_settings, f"{provider}_model", model)
 
                 bot_settings.enabled = enabled
                 bot_settings.poll_minutes = poll_minutes
@@ -290,7 +315,7 @@ def create_app(test_config: dict | None = None) -> Flask:
                     if provider not in PROVIDERS:
                         raise ValueError("Unknown AI provider")
                     api_key = decrypt_secret(getattr(bot_settings, f"{provider}_api_key_encrypted"))
-                    test_provider(provider, api_key)
+                    test_provider(provider, api_key, getattr(bot_settings, f"{provider}_model"))
                     flash(f"{provider.title()} connection successful.", "success")
                 else:
                     flash("Automation settings saved.", "success")
@@ -307,6 +332,8 @@ def create_app(test_config: dict | None = None) -> Flask:
                 provider: bool(getattr(bot_settings, f"{provider}_api_key_encrypted"))
                 for provider in PROVIDERS
             },
+            default_models=DEFAULT_MODELS,
+            suggested_models=SUGGESTED_MODELS,
         )
 
     @app.post("/settings/connection-code")
@@ -360,6 +387,9 @@ def create_app(test_config: dict | None = None) -> Flask:
         record = owned_record_or_404(g.db, g.user.id, record_id)
         if record.status != "candidate":
             flash("That issue is no longer awaiting approval.", "error")
+            return redirect(url_for("user_dashboard"))
+        if record.repo.strip().lower() in BLOCKED_REPOSITORIES:
+            flash("Applications to this repository are blocked.", "error")
             return redirect(url_for("user_dashboard"))
 
         application_text = request.form.get("application_text", "").strip()

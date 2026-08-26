@@ -13,6 +13,17 @@ DEFAULT_MODELS = {
     "deepseek": "deepseek-chat",
     "openai": "gpt-5.6",
 }
+# A curated starting point for the settings UI; users can type any other model id.
+SUGGESTED_MODELS = {
+    "gemini": ["gemini-3.7-flash", "gemini-3.7-pro", "gemini-3-flash-lite"],
+    "deepseek": ["deepseek-chat", "deepseek-reasoner"],
+    "openai": ["gpt-5.6", "gpt-5.6-mini", "gpt-5.6-nano"],
+}
+
+
+def resolve_model(provider: str, requested: str | None) -> str:
+    requested = (requested or "").strip()
+    return requested or DEFAULT_MODELS.get(provider, "")
 
 
 class AIWriterError(RuntimeError):
@@ -30,6 +41,7 @@ def generate_application_message(
     provider_keys: dict[str, str],
     preferred: str,
     fallback_message: str,
+    provider_models: dict[str, str] | None = None,
     timeout: int = 25,
 ) -> tuple[str, str]:
     """Return an application message and the provider that produced it."""
@@ -39,8 +51,9 @@ def generate_application_message(
         api_key = (provider_keys.get(provider) or "").strip()
         if not api_key:
             continue
+        model = resolve_model(provider, (provider_models or {}).get(provider))
         try:
-            message = _generate(provider, api_key, prompt, timeout)
+            message = _generate(provider, api_key, model, prompt, timeout)
             return _clean_message(message), provider
         except Exception as exc:
             errors.append(f"{provider}: {exc}")
@@ -49,7 +62,7 @@ def generate_application_message(
     return fallback, "fallback"
 
 
-def test_provider(provider: str, api_key: str, timeout: int = 20) -> None:
+def test_provider(provider: str, api_key: str, model: str = "", timeout: int = 20) -> None:
     if provider not in PROVIDERS:
         raise AIWriterError("Unknown AI provider")
     if not api_key.strip():
@@ -57,16 +70,16 @@ def test_provider(provider: str, api_key: str, timeout: int = 20) -> None:
     _generate(
         provider,
         api_key.strip(),
+        resolve_model(provider, model),
         "Reply with exactly: Connection successful",
         timeout,
     )
 
 
-def _generate(provider: str, api_key: str, prompt: str, timeout: int) -> str:
+def _generate(provider: str, api_key: str, model: str, prompt: str, timeout: int) -> str:
     if provider == "gemini":
         response = requests.post(
-            "https://generativelanguage.googleapis.com/v1beta/models/"
-            f"{DEFAULT_MODELS['gemini']}:generateContent",
+            f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
             headers={"x-goog-api-key": api_key, "content-type": "application/json"},
             json={
                 "contents": [{"role": "user", "parts": [{"text": prompt}]}],
@@ -84,7 +97,7 @@ def _generate(provider: str, api_key: str, prompt: str, timeout: int) -> str:
             "https://api.deepseek.com/chat/completions",
             headers={"authorization": f"Bearer {api_key}", "content-type": "application/json"},
             json={
-                "model": DEFAULT_MODELS["deepseek"],
+                "model": model,
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0.35,
                 "max_tokens": 140,
@@ -99,7 +112,7 @@ def _generate(provider: str, api_key: str, prompt: str, timeout: int) -> str:
             "https://api.openai.com/v1/responses",
             headers={"authorization": f"Bearer {api_key}", "content-type": "application/json"},
             json={
-                "model": DEFAULT_MODELS["openai"],
+                "model": model,
                 "input": prompt,
                 "max_output_tokens": 140,
                 "store": False,

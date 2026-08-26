@@ -3,7 +3,19 @@
 {% block content %}
 <header class="page-head">
   <div><p class="eyebrow">Drips Wave</p><h1>Your workspace</h1><p class="page-description">Monitor automatic applications, assignments, and slot rotation.</p></div>
-  <a class="button secondary" href="{{ url_for('settings') }}">Configure automation</a>
+  <div class="inline">
+    <a class="button secondary" href="{{ url_for('settings') }}">Configure automation</a>
+    {% if settings.drips_session_encrypted %}
+    <form method="post" action="{{ url_for('disconnect_drips_session') }}" onsubmit="return confirm('Disconnect your Drips session and pause automation?');">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button class="danger" type="submit">Disconnect session</button>
+    </form>
+    {% endif %}
+    <form method="post" action="{{ url_for('clear_activity_logs') }}" onsubmit="return confirm('Clear all of your activity logs? This cannot be undone.');">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button class="secondary" type="submit"{% if not logs %} disabled{% endif %}>Clear logs</button>
+    </form>
+  </div>
 </header>
 
 <section class="grid section-gap" aria-label="Application summary">

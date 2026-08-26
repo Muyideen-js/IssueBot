@@ -21,7 +21,7 @@ import dashboard  # noqa: E402
 import automation  # noqa: E402
 import worker  # noqa: E402
 from database import Base, SessionLocal, engine  # noqa: E402
-from models import BotSettings, EnrollmentToken, IssueRecord, User, utcnow  # noqa: E402
+from models import ActivityLog, BotSettings, EnrollmentToken, IssueRecord, User, utcnow  # noqa: E402
 from security import decrypt_secret, encrypt_secret  # noqa: E402
 
 
@@ -164,6 +164,82 @@ class PortalTestCase(unittest.TestCase):
             enrollment = db.query(EnrollmentToken).one()
             self.assertIsNotNone(enrollment.used_at)
 
+    def test_user_disconnects_only_their_own_drips_session(self):
+        with SessionLocal() as db:
+            owner = User(username="disconnect-user", must_change_password=False)
+            owner.set_password("disconnect-password-123")
+            other = User(username="connected-other", must_change_password=False)
+            other.set_password("connected-other-password-123")
+            db.add_all([owner, other])
+            db.flush()
+            owner_id = owner.id
+            other_id = other.id
+            db.add_all([
+                BotSettings(
+                    user_id=owner_id,
+                    enabled=True,
+                    drips_session_encrypted=encrypt_secret('{"cookies": []}'),
+                    last_error="old session error",
+                ),
+                BotSettings(
+                    user_id=other_id,
+                    enabled=True,
+                    drips_session_encrypted=encrypt_secret('{"cookies": [{"name": "keep"}]}'),
+                ),
+            ])
+            db.commit()
+
+        self.login("disconnect-user", "disconnect-password-123")
+        token = self.csrf("/dashboard")
+        response = self.client.post(
+            "/dashboard/disconnect-session",
+            data={"csrf_token": token},
+            follow_redirects=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Drips session disconnected", response.data)
+
+        with SessionLocal() as db:
+            owner_settings = db.query(BotSettings).filter_by(user_id=owner_id).one()
+            other_settings = db.query(BotSettings).filter_by(user_id=other_id).one()
+            self.assertEqual(owner_settings.drips_session_encrypted, "")
+            self.assertFalse(owner_settings.enabled)
+            self.assertEqual(owner_settings.last_error, "")
+            self.assertNotEqual(other_settings.drips_session_encrypted, "")
+            self.assertTrue(other_settings.enabled)
+
+    def test_user_clears_only_their_own_activity_logs(self):
+        with SessionLocal() as db:
+            owner = User(username="clear-logs-user", must_change_password=False)
+            owner.set_password("clear-logs-password-123")
+            other = User(username="logs-other", must_change_password=False)
+            other.set_password("logs-other-password-123")
+            db.add_all([owner, other])
+            db.flush()
+            owner_id = owner.id
+            other_id = other.id
+            db.add_all([BotSettings(user_id=owner_id), BotSettings(user_id=other_id)])
+            db.add_all([
+                ActivityLog(user_id=owner_id, message="owner log one"),
+                ActivityLog(user_id=owner_id, message="owner log two"),
+                ActivityLog(user_id=other_id, message="other log"),
+            ])
+            db.commit()
+
+        self.login("clear-logs-user", "clear-logs-password-123")
+        token = self.csrf("/dashboard")
+        response = self.client.post(
+            "/dashboard/clear-logs",
+            data={"csrf_token": token},
+            follow_redirects=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Activity logs cleared", response.data)
+
+        with SessionLocal() as db:
+            self.assertEqual(db.query(ActivityLog).filter_by(user_id=owner_id).count(), 0)
+            self.assertEqual(db.query(ActivityLog).filter_by(user_id=other_id).count(), 1)
+
     def test_user_cannot_modify_another_users_issue(self):
         with SessionLocal() as db:
             owner = User(username="owner", must_change_password=False)
@@ -185,6 +261,45 @@ class PortalTestCase(unittest.TestCase):
             data={"csrf_token": token},
         )
         self.assertEqual(response.status_code, 404)
+
+    def test_blocked_repository_cannot_be_applied_to_manually(self):
+        with SessionLocal() as db:
+            user = User(username="blocked-repo-user", must_change_password=False)
+            user.set_password("blocked-repo-password-123")
+            db.add(user)
+            db.flush()
+            db.add(BotSettings(
+                user_id=user.id,
+                drips_session_encrypted=encrypt_secret('{"cookies": []}'),
+            ))
+            record = IssueRecord(
+                user_id=user.id,
+                issue_id="blocked-issue",
+                title="Must never apply",
+                repo="Consulting-Manao/tansu",
+                status="candidate",
+            )
+            db.add(record)
+            db.commit()
+            record_id = record.id
+
+        self.login("blocked-repo-user", "blocked-repo-password-123")
+        token = self.csrf("/dashboard")
+        with patch.object(dashboard, "WaveClient") as wave_client:
+            response = self.client.post(
+                f"/issues/{record_id}/approve",
+                data={
+                    "csrf_token": token,
+                    "application_text": "I can implement and test this requested change.",
+                },
+                follow_redirects=True,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Applications to this repository are blocked", response.data)
+        wave_client.assert_not_called()
+        with SessionLocal() as db:
+            self.assertEqual(db.get(IssueRecord, record_id).status, "candidate")
 
     def test_post_without_csrf_is_rejected(self):
         response = self.client.post("/settings", data={})
@@ -239,6 +354,44 @@ class PortalTestCase(unittest.TestCase):
             self.assertEqual(decrypt_secret(settings.openai_api_key_encrypted), "openai-secret-key")
             self.assertEqual(settings.preferred_ai_provider, "deepseek")
             self.assertEqual(settings.max_active_applications, 15)
+
+    def test_user_can_choose_a_model_per_ai_provider(self):
+        with SessionLocal() as db:
+            user = User(username="model-user", must_change_password=False)
+            user.set_password("model-user-password-123")
+            db.add(user)
+            db.flush()
+            db.add(BotSettings(user_id=user.id))
+            db.commit()
+            user_id = user.id
+
+        self.login("model-user", "model-user-password-123")
+        token = self.csrf("/settings")
+        response = self.client.post(
+            "/settings",
+            data={
+                "csrf_token": token,
+                "action": "save",
+                "poll_minutes": "5",
+                "max_active_applications": "15",
+                "max_per_repo": "2",
+                "stale_minutes": "30",
+                "preferred_ai_provider": "deepseek",
+                "fallback_message": "Hi, I can fix this",
+                "priority_repos": "",
+                "gemini_model": "gemini-3.7-pro",
+                "deepseek_model": "deepseek-reasoner",
+                "openai_model": "",
+            },
+            follow_redirects=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        with SessionLocal() as db:
+            settings = db.query(BotSettings).filter_by(user_id=user_id).one()
+            self.assertEqual(settings.gemini_model, "gemini-3.7-pro")
+            self.assertEqual(settings.deepseek_model, "deepseek-reasoner")
+            self.assertEqual(settings.openai_model, "")
+        self.assertIn(b"gemini-3.7-pro", response.data)
 
     def test_expired_login_form_recovers_with_fresh_page(self):
         stale_token = self.csrf("/login")
