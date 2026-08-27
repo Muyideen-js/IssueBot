@@ -328,6 +328,41 @@ class PortalTestCase(unittest.TestCase):
         self.assertEqual(response.get_json(), result)
         run_once.assert_called_once_with(max_users=3, time_budget_seconds=220)
 
+    def test_scheduler_runs_never_scanned_users_before_previous_users(self):
+        with SessionLocal() as db:
+            previous_user = User(username="previous-user", must_change_password=False)
+            previous_user.set_password("previous-user-password-123")
+            new_user = User(username="new-user", must_change_password=False)
+            new_user.set_password("new-user-password-123")
+            db.add_all([previous_user, new_user])
+            db.flush()
+            db.add_all([
+                BotSettings(
+                    user_id=previous_user.id,
+                    enabled=True,
+                    poll_minutes=5,
+                    last_run_at=utcnow() - timedelta(minutes=10),
+                ),
+                BotSettings(
+                    user_id=new_user.id,
+                    enabled=True,
+                    poll_minutes=5,
+                    last_run_at=None,
+                ),
+            ])
+            db.commit()
+
+        scanned_users = []
+
+        def record_scan(_db, user, _settings):
+            scanned_users.append(user.username)
+
+        with patch.object(worker, "run_user_cycle", side_effect=record_scan):
+            result = worker.run_once(max_users=1)
+
+        self.assertEqual(result["processed"], 1)
+        self.assertEqual(scanned_users, ["new-user"])
+
     def test_uptime_head_requests_succeed_without_redirects(self):
         root = self.client.head("/")
         health = self.client.head("/health")

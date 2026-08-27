@@ -62,7 +62,10 @@ def run_once(*, max_users: int | None = None, time_budget_seconds: int | None = 
                 select(BotSettings)
                 .join(User)
                 .where(BotSettings.enabled.is_(True), User.is_active.is_(True))
-                .order_by(BotSettings.last_run_at.asc())
+                .order_by(
+                    BotSettings.last_run_at.asc().nullsfirst(),
+                    BotSettings.id.asc(),
+                )
             ).all()
             now = utcnow()
             for settings in settings_rows:
