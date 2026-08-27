@@ -1,0 +1,54 @@
+name: Build Linux connector
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - connector.py
+      - build_linux_connector.py
+      - .github/workflows/build-linux-connector.yml
+
+permissions:
+  contents: read
+
+jobs:
+  build-linux:
+    name: Build Linux x86_64 connector
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install build dependencies
+        run: python -m pip install pyinstaller playwright requests
+
+      - name: Install Linux browser dependencies
+        run: python -m playwright install-deps chromium
+
+      - name: Build connector with Chromium
+        run: python build_linux_connector.py
+
+      - name: Verify executable
+        run: |
+          chmod +x dist/issuebot-connector
+          dist/issuebot-connector --help
+
+      - name: Package connector
+        run: tar -C dist -czf issuebot-connector-linux-x86_64.tar.gz issuebot-connector
+
+      - name: Upload Linux connector
+        uses: actions/upload-artifact@v4
+        with:
+          name: issuebot-connector-linux-x86_64
+          path: issuebot-connector-linux-x86_64.tar.gz
+          if-no-files-found: error
+          retention-days: 30

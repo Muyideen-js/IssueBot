@@ -86,6 +86,32 @@ python build_connector.py
 
 Give users only `dist\issuebot-connector.exe` and your HTTPS portal URL.
 
+## Build the Linux connector
+
+The Linux connector is built natively on 64-bit Ubuntu and bundles Chromium,
+so the recipient does not need Python or a separate browser installation.
+Run the **Build Linux connector** workflow from the repository's GitHub Actions
+page, then download the `issuebot-connector-linux-x86_64` artifact.
+
+On Linux, extract and run it:
+
+```bash
+tar -xzf issuebot-connector-linux-x86_64.tar.gz
+chmod +x issuebot-connector
+./issuebot-connector
+```
+
+To build it manually on a Linux desktop instead:
+
+```bash
+python3 -m pip install pyinstaller playwright requests
+python3 -m playwright install-deps chromium
+python3 build_linux_connector.py
+```
+
+The connector opens a visible browser, so it must be run from a Linux desktop
+session. The hosted IssueBot worker continues running after the connector exits.
+
 ## Render deployment
 
 `render.yaml` provisions a free Flask web service that connects to an external Neon PostgreSQL database. The monitoring process runs beside the website in that single service. Before deploying, configure `DATABASE_URL`, `CREDENTIAL_ENCRYPTION_KEY`, `ADMIN_USERNAME`, and `ADMIN_PASSWORD`.
