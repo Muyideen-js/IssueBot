@@ -120,6 +120,32 @@ This free setup is suitable for testing, not dependable 24/7 monitoring: the Ren
 
 Render generates `APP_SECRET`. The connected repository should remain private. Official references: [Blueprint specification](https://render.com/docs/blueprint-spec), [background workers](https://render.com/docs/background-workers).
 
+## Vercel deployment
+
+`app.py` is the Vercel WSGI entrypoint. Unlike Render, Vercel does not keep
+`worker.py` alive between requests. An Upstash QStash schedule must therefore
+send a signed `POST` request to `/api/scan` every five minutes. The endpoint
+rejects unsigned calls, prevents overlapping scans with a PostgreSQL advisory
+lock, and processes a bounded number of due users per invocation.
+
+1. Import this repository into a Vercel Hobby project.
+2. Reuse the existing `DATABASE_URL`, `APP_SECRET`, and
+   `CREDENTIAL_ENCRYPTION_KEY` so current accounts and encrypted sessions remain
+   usable.
+3. Configure `APP_ENV=production`, `ADMIN_USERNAME`, and `ADMIN_PASSWORD`.
+4. Copy `QSTASH_CURRENT_SIGNING_KEY` and `QSTASH_NEXT_SIGNING_KEY` from the
+   QStash console into Vercel environment variables.
+5. Create a QStash schedule with destination
+   `https://<vercel-domain>/api/scan`, method `POST`, and cron expression
+   `*/5 * * * *`.
+6. Confirm `/health`, administrator login, and a successful scheduled scan,
+   then stop the previous always-on worker to avoid duplicate applications.
+
+`SCAN_BATCH_SIZE` defaults to `3`, and `SCAN_TIME_BUDGET_SECONDS` defaults to
+`220`. Due users not reached in one invocation remain due and are selected by a
+later invocation. Vercel serves `public/app.css` directly, while local and
+Render runs retain the matching Flask stylesheet route.
+
 ## Current limitations
 
 The Drips Wave contributor API is not documented as a stable third-party API. The worker uses the API behavior observed by the existing bot, so Drips frontend/API changes may require maintenance. When a Drips refresh session expires, the user must reconnect with a new one-time code.

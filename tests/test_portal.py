@@ -305,6 +305,29 @@ class PortalTestCase(unittest.TestCase):
         response = self.client.post("/settings", data={})
         self.assertEqual(response.status_code, 400)
 
+    def test_vercel_entrypoint_exports_the_portal(self):
+        import app as vercel_entrypoint
+
+        self.assertIs(vercel_entrypoint.app, dashboard.app)
+
+    def test_scheduled_scan_rejects_unsigned_requests(self):
+        with patch.object(dashboard, "verify_qstash_request", return_value=False):
+            response = self.client.post("/api/scan", data=b"{}")
+
+        self.assertEqual(response.status_code, 401)
+
+    def test_scheduled_scan_runs_a_bounded_batch(self):
+        result = {"status": "complete", "processed": 2, "failed": 0}
+        with (
+            patch.object(dashboard, "verify_qstash_request", return_value=True),
+            patch.object(dashboard, "run_once", return_value=result) as run_once,
+        ):
+            response = self.client.post("/api/scan", data=b"{}")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json(), result)
+        run_once.assert_called_once_with(max_users=3, time_budget_seconds=220)
+
     def test_uptime_head_requests_succeed_without_redirects(self):
         root = self.client.head("/")
         health = self.client.head("/health")
@@ -423,7 +446,7 @@ class PortalTestCase(unittest.TestCase):
             applied = []
 
             class FakeClient:
-                def __init__(self, session_state):
+                def __init__(self, session_state, on_refresh=None):
                     self.session_state = session_state
 
                 def fetch_applications(self, status):
@@ -472,7 +495,7 @@ class PortalTestCase(unittest.TestCase):
             applied = []
 
             class FakeClient:
-                def __init__(self, session_state):
+                def __init__(self, session_state, on_refresh=None):
                     self.session_state = session_state
 
                 def fetch_applications(self, status):
@@ -533,7 +556,7 @@ class PortalTestCase(unittest.TestCase):
             applied = []
 
             class FakeClient:
-                def __init__(self, session_state):
+                def __init__(self, session_state, on_refresh=None):
                     self.session_state = session_state
 
                 def fetch_applications(self, status):
@@ -598,7 +621,7 @@ class PortalTestCase(unittest.TestCase):
             applied = []
 
             class FakeClient:
-                def __init__(self, session_state):
+                def __init__(self, session_state, on_refresh=None):
                     self.session_state = session_state
 
                 def fetch_applications(self, status):

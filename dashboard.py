@@ -16,9 +16,11 @@ from flask import (
     redirect,
     render_template,
     request,
+    send_from_directory,
     session,
     url_for,
 )
+from qstash import Receiver
 from sqlalchemy import delete, desc, select
 
 from ai_writer import DEFAULT_MODELS, PROVIDERS, SUGGESTED_MODELS, test_provider
@@ -27,6 +29,7 @@ from database import SessionLocal, init_db
 from models import ActivityLog, BotSettings, EnrollmentToken, IssueRecord, User, utcnow
 from security import decrypt_secret, encrypt_secret
 from wave_service import WaveClient, WaveError
+from worker import run_once
 
 
 USERNAME_RE = re.compile(r"^[a-zA-Z0-9_.-]{3,40}$")
@@ -61,7 +64,8 @@ def create_app(test_config: dict | None = None) -> Flask:
         if g.user and not g.user.is_active:
             session.clear()
             g.user = None
-        if request.method == "POST" and request.endpoint != "connect_session_api":
+        csrf_exempt_endpoints = {"connect_session_api", "scheduled_scan_api"}
+        if request.method == "POST" and request.endpoint not in csrf_exempt_endpoints:
             expected = session.get("csrf_token", "")
             supplied = request.form.get("csrf_token") or request.headers.get("X-CSRF-Token", "")
             if not expected or not secrets.compare_digest(expected, supplied):
@@ -114,6 +118,23 @@ def create_app(test_config: dict | None = None) -> Flask:
         if request.method == "HEAD":
             return "", 204
         return {"ok": True}
+
+    @app.get("/app.css")
+    def app_stylesheet():
+        return send_from_directory(app.static_folder, "app.css")
+
+    @app.post("/api/scan")
+    def scheduled_scan_api():
+        try:
+            verified = verify_qstash_request(request)
+        except RuntimeError as exc:
+            return {"error": str(exc)}, 503
+        if not verified:
+            return {"error": "Invalid QStash signature"}, 401
+
+        max_users = bounded_int(os.getenv("SCAN_BATCH_SIZE"), 1, 20, 3)
+        time_budget = bounded_int(os.getenv("SCAN_TIME_BUDGET_SECONDS"), 30, 240, 220)
+        return run_once(max_users=max_users, time_budget_seconds=time_budget)
 
     @app.route("/login", methods=["GET", "POST"])
     def login():
@@ -528,6 +549,28 @@ def bootstrap_admin() -> None:
         db.flush()
         db.add(BotSettings(user_id=admin.id))
         db.commit()
+
+
+def verify_qstash_request(incoming_request) -> bool:
+    current_key = os.getenv("QSTASH_CURRENT_SIGNING_KEY", "").strip()
+    next_key = os.getenv("QSTASH_NEXT_SIGNING_KEY", "").strip()
+    if not current_key or not next_key:
+        raise RuntimeError("QStash signing keys are not configured")
+    signature = incoming_request.headers.get("Upstash-Signature", "").strip()
+    if not signature:
+        return False
+    try:
+        receiver = Receiver(
+            current_signing_key=current_key,
+            next_signing_key=next_key,
+        )
+        receiver.verify(
+            body=incoming_request.get_data(as_text=True),
+            signature=signature,
+        )
+        return True
+    except Exception:
+        return False
 
 
 def get_or_create_settings(db, user_id: int) -> BotSettings:

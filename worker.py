@@ -1,34 +1,85 @@
 #!/usr/bin/env python3
 import os
 import signal
+import threading
 import time
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from automation import run_user_cycle
-from database import SessionLocal, init_db
+from database import SessionLocal, engine, init_db
 from models import BotSettings, User, utcnow
 
 
 STOP_REQUESTED = False
+SCAN_LOCK_KEY = 4_971_756_636_225_215_491
+_PROCESS_SCAN_LOCK = threading.Lock()
 
 
-def run_once() -> None:
+@contextmanager
+def _scan_lock():
+    """Prevent scheduler retries or overlapping deployments from scanning twice."""
+    if not _PROCESS_SCAN_LOCK.acquire(blocking=False):
+        yield False
+        return
+
+    connection = None
+    acquired = True
+    try:
+        if engine.dialect.name == "postgresql":
+            connection = engine.connect()
+            acquired = bool(connection.scalar(
+                text("SELECT pg_try_advisory_lock(:lock_key)"),
+                {"lock_key": SCAN_LOCK_KEY},
+            ))
+        yield acquired
+    finally:
+        if connection is not None:
+            if acquired:
+                connection.execute(
+                    text("SELECT pg_advisory_unlock(:lock_key)"),
+                    {"lock_key": SCAN_LOCK_KEY},
+                )
+            connection.close()
+        _PROCESS_SCAN_LOCK.release()
+
+
+def run_once(*, max_users: int | None = None, time_budget_seconds: int | None = None) -> dict:
+    """Run a bounded batch of due users and return a scheduler-friendly summary."""
     init_db()
-    with SessionLocal() as db:
-        settings_rows = db.scalars(
-            select(BotSettings)
-            .join(User)
-            .where(BotSettings.enabled.is_(True), User.is_active.is_(True))
-        ).all()
-        now = utcnow()
-        for settings in settings_rows:
-            due_at = (settings.last_run_at or datetime.min) + timedelta(minutes=settings.poll_minutes)
-            if due_at > now:
-                continue
-            user = db.get(User, settings.user_id)
-            run_user_cycle(db, user, settings)
+    started = time.monotonic()
+    processed = 0
+    failed = 0
+
+    with _scan_lock() as acquired:
+        if not acquired:
+            return {"status": "busy", "processed": 0, "failed": 0}
+
+        with SessionLocal() as db:
+            settings_rows = db.scalars(
+                select(BotSettings)
+                .join(User)
+                .where(BotSettings.enabled.is_(True), User.is_active.is_(True))
+                .order_by(BotSettings.last_run_at.asc())
+            ).all()
+            now = utcnow()
+            for settings in settings_rows:
+                due_at = (settings.last_run_at or datetime.min) + timedelta(minutes=settings.poll_minutes)
+                if due_at > now:
+                    continue
+                if max_users is not None and processed >= max_users:
+                    break
+                if time_budget_seconds is not None and time.monotonic() - started >= time_budget_seconds:
+                    break
+                user = db.get(User, settings.user_id)
+                run_user_cycle(db, user, settings)
+                processed += 1
+                if settings.last_error:
+                    failed += 1
+
+    return {"status": "complete", "processed": processed, "failed": failed}
 
 
 def _stop(*_args) -> None:
