@@ -50,6 +50,7 @@ def run_once(*, max_users: int | None = None, time_budget_seconds: int | None = 
     """Run a bounded batch of due users and return a scheduler-friendly summary."""
     init_db()
     started = time.monotonic()
+    deadline = started + time_budget_seconds if time_budget_seconds is not None else None
     processed = 0
     failed = 0
 
@@ -77,7 +78,7 @@ def run_once(*, max_users: int | None = None, time_budget_seconds: int | None = 
                 if time_budget_seconds is not None and time.monotonic() - started >= time_budget_seconds:
                     break
                 user = db.get(User, settings.user_id)
-                run_user_cycle(db, user, settings)
+                run_user_cycle(db, user, settings, deadline=deadline)
                 processed += 1
                 if settings.last_error:
                     failed += 1

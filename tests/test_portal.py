@@ -354,7 +354,7 @@ class PortalTestCase(unittest.TestCase):
 
         scanned_users = []
 
-        def record_scan(_db, user, _settings):
+        def record_scan(_db, user, _settings, deadline=None):
             scanned_users.append(user.username)
 
         with patch.object(worker, "run_user_cycle", side_effect=record_scan):

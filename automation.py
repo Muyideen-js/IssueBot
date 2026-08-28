@@ -2,6 +2,7 @@
 
 import json
 import re
+import time
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 
@@ -116,7 +117,7 @@ def _rank_issues(issues: list[dict], priorities: set[str]) -> list[dict]:
     )
 
 
-def run_user_cycle(db, user: User, settings: BotSettings) -> None:
+def run_user_cycle(db, user: User, settings: BotSettings, deadline: float | None = None) -> None:
     settings.last_run_at = utcnow()
     settings.last_error = ""
     db.commit()
@@ -184,7 +185,10 @@ def run_user_cycle(db, user: User, settings: BotSettings) -> None:
         stale_before = now - timedelta(minutes=settings.stale_minutes)
         active_pending = []
         stale_withdrawn = 0
-        for application in pending:
+        for index, application in enumerate(pending):
+            if deadline is not None and time.monotonic() >= deadline:
+                active_pending.extend(pending[index:])
+                break
             issue_id = _issue_id(_application_issue(application))
             record = by_issue.get(issue_id)
             if _application_time(application, record, now) >= stale_before:
@@ -233,6 +237,8 @@ def run_user_cycle(db, user: User, settings: BotSettings) -> None:
         applied = 0
         repo_counts = Counter(issue_repo(_application_issue(app)).lower() for app in pending)
         for issue in _rank_issues(available, priorities):
+            if deadline is not None and time.monotonic() >= deadline:
+                break
             repo = issue_repo(issue)
             if _is_blocked_repo(repo):
                 continue
