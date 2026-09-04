@@ -4,7 +4,7 @@ from ai_writer import generate_application_message, provider_order
 
 
 def test_provider_order_starts_with_user_preference():
-    assert provider_order("deepseek") == ["deepseek", "gemini", "openai"]
+    assert provider_order("deepseek") == ["deepseek", "gemini", "openai", "groq"]
 
 
 def test_no_connected_provider_uses_custom_fallback():
@@ -79,3 +79,25 @@ def test_selected_deepseek_and_openai_models_are_sent_in_payloads():
         )
     assert provider == "openai"
     assert post.call_args.kwargs["json"]["model"] == "openai-custom-model"
+
+
+def test_selected_groq_model_is_sent_to_openai_compatible_endpoint():
+    response = Mock(status_code=200)
+    response.json.return_value = {
+        "choices": [{"message": {"content": "I can add the validation and tests."}}]
+    }
+    with patch("ai_writer.requests.post", return_value=response) as post:
+        message, provider = generate_application_message(
+            {"title": "Validate payment amounts"},
+            "owner/repo",
+            {"groq": "gsk-key"},
+            "groq",
+            "Fallback",
+            {"groq": "openai/gpt-oss-120b"},
+        )
+
+    assert provider == "groq"
+    assert "validation and tests" in message
+    assert post.call_args.args[0] == "https://api.groq.com/openai/v1/chat/completions"
+    assert post.call_args.kwargs["headers"]["authorization"] == "Bearer gsk-key"
+    assert post.call_args.kwargs["json"]["model"] == "openai/gpt-oss-120b"

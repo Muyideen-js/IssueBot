@@ -80,6 +80,7 @@ def _provider_keys(settings: BotSettings) -> dict[str, str]:
         "gemini": decrypt_secret(settings.gemini_api_key_encrypted),
         "deepseek": decrypt_secret(settings.deepseek_api_key_encrypted),
         "openai": decrypt_secret(settings.openai_api_key_encrypted),
+        "groq": decrypt_secret(settings.groq_api_key_encrypted),
     }
 
 
@@ -88,6 +89,7 @@ def _provider_models(settings: BotSettings) -> dict[str, str]:
         "gemini": settings.gemini_model,
         "deepseek": settings.deepseek_model,
         "openai": settings.openai_model,
+        "groq": settings.groq_model,
     }
 
 

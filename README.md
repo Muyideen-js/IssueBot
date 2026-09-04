@@ -65,7 +65,7 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 2. Open **Setup**.
 3. Generate a one-time Drips connection code.
 4. Run the compiled IssueBot Connector, enter the website URL and code, then log in to Drips in the browser window it opens.
-5. Optionally connect Gemini, DeepSeek, and OpenAI keys and choose the preferred provider. IssueBot tries the other connected providers if the preferred provider fails.
+5. Optionally connect Gemini, DeepSeek, OpenAI, and Groq keys and choose the preferred provider. IssueBot tries the other connected providers if the preferred provider fails.
 6. Set a fallback message, slot limit, two-per-repository limit, 30-minute rotation, and priority repositories.
 7. Enable automatic applications and watch applications, withdrawals, assignments, and errors in the Activity feed.
 

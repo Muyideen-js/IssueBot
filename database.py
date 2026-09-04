@@ -80,6 +80,7 @@ def _add_automation_columns() -> None:
             "gemini_api_key_encrypted": "TEXT NOT NULL DEFAULT ''",
             "deepseek_api_key_encrypted": "TEXT NOT NULL DEFAULT ''",
             "openai_api_key_encrypted": "TEXT NOT NULL DEFAULT ''",
+            "groq_api_key_encrypted": "TEXT NOT NULL DEFAULT ''",
             "preferred_ai_provider": "VARCHAR(16) NOT NULL DEFAULT 'gemini'",
             "fallback_message": "TEXT NOT NULL DEFAULT 'Hi, I can fix this'",
             "max_active_applications": "INTEGER NOT NULL DEFAULT 15",
@@ -91,6 +92,7 @@ def _add_automation_columns() -> None:
             "gemini_model": "VARCHAR(80) NOT NULL DEFAULT ''",
             "deepseek_model": "VARCHAR(80) NOT NULL DEFAULT ''",
             "openai_model": "VARCHAR(80) NOT NULL DEFAULT ''",
+            "groq_model": "VARCHAR(80) NOT NULL DEFAULT ''",
         },
         "issue_records": {
             "application_id": "VARCHAR(120) NOT NULL DEFAULT ''",

@@ -29,7 +29,7 @@
     <section class="panel stack">
       <div class="panel-title"><h2>AI application writer</h2><span class="badge">Encrypted</span></div>
       <p class="muted small">Keys are encrypted on the server. Leave a key blank to keep the saved value. Choose a suggested model or type any model ID supported by that provider.</p>
-      {% for provider in ['gemini', 'deepseek', 'openai'] %}
+      {% for provider in ai_providers %}
       <div class="credential-row">
         <label>{{ provider|title }} API key<span class="field-note">{{ 'Connected' if connected_ai[provider] else 'Not connected' }}</span><input type="password" name="{{ provider }}_api_key" autocomplete="off" placeholder="{{ 'Saved securely' if connected_ai[provider] else 'Paste API key' }}"></label>
         <label>{{ provider|title }} model<span class="field-note">Default: {{ default_models[provider] }}</span><input type="text" name="{{ provider }}_model" list="{{ provider }}_model_options" maxlength="80" value="{{ settings[provider ~ '_model'] }}" placeholder="{{ default_models[provider] }}"><datalist id="{{ provider }}_model_options">{% for model in suggested_models[provider] %}<option value="{{ model }}">{% endfor %}</datalist></label>
@@ -39,7 +39,7 @@
         </div>
       </div>
       {% endfor %}
-      <label>Preferred provider<select name="preferred_ai_provider">{% for provider in ['gemini', 'deepseek', 'openai'] %}<option value="{{ provider }}" {% if settings.preferred_ai_provider == provider %}selected{% endif %}>{{ provider|title }}</option>{% endfor %}</select><span class="field-note">If it fails, IssueBot tries the other connected providers automatically.</span></label>
+      <label>Preferred provider<select name="preferred_ai_provider">{% for provider in ai_providers %}<option value="{{ provider }}" {% if settings.preferred_ai_provider == provider %}selected{% endif %}>{{ provider|title }}</option>{% endfor %}</select><span class="field-note">If it fails, IssueBot tries the other connected providers automatically.</span></label>
     </section>
 
     <section class="panel stack">

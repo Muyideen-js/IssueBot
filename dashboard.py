@@ -355,6 +355,7 @@ def create_app(test_config: dict | None = None) -> Flask:
             },
             default_models=DEFAULT_MODELS,
             suggested_models=SUGGESTED_MODELS,
+            ai_providers=PROVIDERS,
         )
 
     @app.post("/settings/connection-code")

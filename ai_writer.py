@@ -7,17 +7,19 @@ from collections.abc import Iterable
 import requests
 
 
-PROVIDERS = ("gemini", "deepseek", "openai")
+PROVIDERS = ("gemini", "deepseek", "openai", "groq")
 DEFAULT_MODELS = {
     "gemini": "gemini-3.7-flash",
     "deepseek": "deepseek-chat",
     "openai": "gpt-5.6",
+    "groq": "openai/gpt-oss-20b",
 }
 # A curated starting point for the settings UI; users can type any other model id.
 SUGGESTED_MODELS = {
     "gemini": ["gemini-3.7-flash", "gemini-3.7-pro", "gemini-3-flash-lite"],
     "deepseek": ["deepseek-chat", "deepseek-reasoner"],
     "openai": ["gpt-5.6", "gpt-5.6-mini", "gpt-5.6-nano"],
+    "groq": ["openai/gpt-oss-20b", "openai/gpt-oss-120b"],
 }
 
 
@@ -124,6 +126,21 @@ def _generate(provider: str, api_key: str, model: str, prompt: str, timeout: int
         if data.get("output_text"):
             return str(data["output_text"])
         return "".join(_openai_text_parts(data.get("output") or []))
+
+    if provider == "groq":
+        response = requests.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={"authorization": f"Bearer {api_key}", "content-type": "application/json"},
+            json={
+                "model": model,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.35,
+                "max_tokens": 140,
+            },
+            timeout=timeout,
+        )
+        _raise_for_provider(response, "Groq")
+        return str(response.json().get("choices", [{}])[0].get("message", {}).get("content") or "")
 
     raise AIWriterError("Unknown AI provider")
 
