@@ -23,6 +23,16 @@ def test_withdraw_uses_confirmed_application_and_issue_ids():
     )
 
 
+def test_headers_send_the_connected_users_timezone():
+    client = WaveClient({"cookies": [], "timezone": "Europe/London"})
+    assert client._headers()["x-timezone"] == "Europe/London"
+
+
+def test_headers_fall_back_for_missing_or_invalid_timezone():
+    assert WaveClient({"cookies": []})._headers()["x-timezone"] == "Africa/Lagos"
+    assert WaveClient({"cookies": [], "timezone": "not a timezone"})._headers()["x-timezone"] == "Africa/Lagos"
+
+
 def test_withdraw_fails_closed_without_required_ids():
     client = WaveClient({"cookies": []})
     client.ensure_token = Mock(return_value=("token", False))

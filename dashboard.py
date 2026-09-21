@@ -28,7 +28,7 @@ from automation import BLOCKED_REPOSITORIES
 from database import SessionLocal, init_db
 from models import ActivityLog, BotSettings, EnrollmentToken, IssueRecord, User, utcnow
 from security import decrypt_secret, encrypt_secret
-from wave_service import WaveClient, WaveError
+from wave_service import WaveClient, WaveError, clean_timezone
 from worker import run_once
 
 
@@ -606,7 +606,11 @@ def normalize_drips_session(raw: str) -> str:
         for origin in data.get("origins", [])
         if isinstance(origin, dict) and "drips.network" in str(origin.get("origin", "")).lower()
     ]
-    return json.dumps({"cookies": drips_cookies, "origins": origins})
+    normalized = {"cookies": drips_cookies, "origins": origins}
+    timezone_name = clean_timezone(data.get("timezone"))
+    if timezone_name:
+        normalized["timezone"] = timezone_name
+    return json.dumps(normalized)
 
 
 def bounded_int(raw: str | None, minimum: int, maximum: int, default: int) -> int:

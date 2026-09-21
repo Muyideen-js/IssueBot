@@ -1,5 +1,6 @@
 import base64
 import json
+import re
 from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any
@@ -10,6 +11,15 @@ import requests
 
 WAVE_API = "https://wave-api.drips.network/api"
 WAVE_PROGRAM_ID = "fdc01c95-806f-4b6a-998b-a6ed37e0d81b"
+# Sessions connected before the connector captured the user's timezone fall back to this.
+DEFAULT_TIMEZONE = "Africa/Lagos"
+_TIMEZONE_PATTERN = re.compile(r"UTC|[A-Za-z]+(?:/[A-Za-z0-9_+-]+){1,2}")
+
+
+def clean_timezone(value: Any) -> str:
+    """Return an IANA timezone name such as "Europe/London", or "" if invalid."""
+    value = str(value or "").strip()
+    return value if len(value) <= 64 and _TIMEZONE_PATTERN.fullmatch(value) else ""
 
 
 class WaveError(RuntimeError):
@@ -143,7 +153,7 @@ class WaveClient:
             "cookie": cookies,
             "referer": "https://www.drips.network/",
             "user-agent": "IssueBot/1.0",
-            "x-timezone": "Africa/Lagos",
+            "x-timezone": clean_timezone(self.session_state.get("timezone")) or DEFAULT_TIMEZONE,
         }
         if token:
             headers["authorization"] = f"Bearer {token}"

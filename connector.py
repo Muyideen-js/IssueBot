@@ -34,6 +34,7 @@ def main() -> None:
         input("When Drips shows your logged-in issue page, return here and press ENTER...")
         page.reload(wait_until="networkidle", timeout=60_000)
         session_state = context.storage_state()
+        timezone_name = page.evaluate("Intl.DateTimeFormat().resolvedOptions().timeZone")
         browser.close()
 
     session_state = {
@@ -47,6 +48,7 @@ def main() -> None:
             for origin in session_state.get("origins", [])
             if "drips.network" in str(origin.get("origin", "")).lower()
         ],
+        "timezone": timezone_name,
     }
 
     response = requests.post(
