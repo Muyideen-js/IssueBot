@@ -177,6 +177,9 @@ def run_user_cycle(db, user: User, settings: BotSettings, deadline: float | None
         for record in records:
             if record.status == "pending" and record.issue_id not in pending_ids | accepted_ids:
                 record.status = "inactive"
+            elif record.status == "accepted" and record.issue_id not in accepted_ids:
+                # Drips no longer lists it as an assignment, e.g. after the Wave ended.
+                record.status = "completed"
 
         for record in newly_accepted:
             promoted = _add_priority_repo(settings, record.repo)
@@ -217,6 +220,8 @@ def run_user_cycle(db, user: User, settings: BotSettings, deadline: float | None
             if not issue_id or issue_id in accepted_ids or issue_id in current_pending_ids:
                 continue
             record = by_issue.get(issue_id)
+            if record and record.status == "closed":
+                record.status = "candidate"
             if record and record.status != "candidate":
                 continue
             if not record:
@@ -233,6 +238,13 @@ def run_user_cycle(db, user: User, settings: BotSettings, deadline: float | None
                 records.append(record)
                 by_issue[issue_id] = record
             available.append(issue)
+
+        # Only issues Drips currently lists as open and unassigned stay queued, so
+        # closed or taken issues from earlier Waves stop piling up in the queue.
+        open_ids = {_issue_id(issue) for issue in issues}
+        for record in records:
+            if record.status == "candidate" and record.issue_id not in open_ids:
+                record.status = "closed"
 
         provider_keys = _provider_keys(settings)
         provider_models = _provider_models(settings)

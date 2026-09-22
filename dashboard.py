@@ -274,6 +274,16 @@ def create_app(test_config: dict | None = None) -> Flask:
         flash("Activity logs cleared.", "success")
         return redirect(url_for("user_dashboard"))
 
+    @app.post("/dashboard/clear-history")
+    @user_required
+    def clear_issue_history():
+        # Only local tracking is removed; the next scan rebuilds live pending and
+        # accepted applications from Drips.
+        g.db.execute(delete(IssueRecord).where(IssueRecord.user_id == g.user.id))
+        g.db.commit()
+        flash("Wave history cleared. The next scan reloads your live applications from Drips.", "success")
+        return redirect(url_for("user_dashboard"))
+
     @app.route("/settings", methods=["GET", "POST"])
     @user_required
     def settings():

@@ -15,6 +15,10 @@
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <button class="secondary" type="submit"{% if not logs %} disabled{% endif %}>Clear logs</button>
     </form>
+    <form method="post" action="{{ url_for('clear_issue_history') }}" onsubmit="return confirm('Clear your queue, pending and accepted lists? Nothing is withdrawn on Drips; the next scan reloads your live applications.');">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button class="secondary" type="submit"{% if not candidates and not pending and not accepted %} disabled{% endif %}>Clear Wave history</button>
+    </form>
   </div>
 </header>
 
