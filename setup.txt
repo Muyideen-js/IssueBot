@@ -1,0 +1,84 @@
+============================================
+  DRIPS WAVE BOT — SETUP GUIDE
+============================================
+
+REQUIREMENTS:
+- Windows PC
+- Telegram account
+
+--------------------------------------------
+STEP 1 — Create your .env file
+--------------------------------------------
+Create a file called ".env" in the same 
+folder as drips_fast.exe
+
+Copy this inside:
+
+GITHUB_USERNAME=your_github_username
+GITHUB_PASSWORD=your_github_password
+GITHUB_OTP_SECRET=
+
+TELEGRAM_BOT_TOKEN=your_telegram_token
+TELEGRAM_CHAT_ID=your_telegram_chat_id
+
+GEMINI_API_KEY=your_gemini_key
+ROTATE_HOURS=0.5
+MAX_SLOTS=15
+MAX_PER_REPO=2
+HEADLESS=false
+
+--------------------------------------------
+HOW TO GET YOUR TELEGRAM DETAILS:
+--------------------------------------------
+1. Open Telegram → search @BotFather
+2. Send /newbot → follow steps → copy token
+3. Start your bot, visit:
+   https://api.telegram.org/bot<TOKEN>/getUpdates
+4. Find "chat":{"id": THIS NUMBER}
+
+--------------------------------------------
+HOW TO GET GEMINI API KEY (FREE):
+--------------------------------------------
+Go to: https://aistudio.google.com/apikey
+Click: Create API key
+Copy it into .env
+
+--------------------------------------------
+STEP 2 — Login once
+--------------------------------------------
+Open terminal in the folder and run:
+
+  drips_fast.exe --login
+
+Browser opens → log into Drips Wave
+→ press ENTER in terminal
+→ session saved
+
+--------------------------------------------
+STEP 3 — Run the bot
+--------------------------------------------
+  drips_fast.exe --watch
+
+Bot applies for issues automatically.
+Check Telegram for notifications.
+
+To stop: press Ctrl+C
+
+============================================
+FOLDER STRUCTURE (should look like this):
+============================================
+📁 drips-bot/
+├── drips_fast.exe
+├── .env
+└── setup.txt
+
+Files auto-created when bot runs:
+├── sessions/drips.json
+├── drips_seen.json
+├── drips_applied.json
+└── bot.log
+
+============================================
+NEED HELP? Contact the person who gave you 
+this bot.
+============================================
