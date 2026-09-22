@@ -101,3 +101,20 @@ def test_selected_groq_model_is_sent_to_openai_compatible_endpoint():
     assert post.call_args.args[0] == "https://api.groq.com/openai/v1/chat/completions"
     assert post.call_args.kwargs["headers"]["authorization"] == "Bearer gsk-key"
     assert post.call_args.kwargs["json"]["model"] == "openai/gpt-oss-120b"
+    assert post.call_args.kwargs["json"]["reasoning_effort"] == "low"
+    assert post.call_args.kwargs["json"]["max_completion_tokens"] == 1024
+    assert "max_tokens" not in post.call_args.kwargs["json"]
+
+
+def test_non_reasoning_groq_models_keep_the_short_token_cap():
+    response = Mock(status_code=200)
+    response.json.return_value = {"choices": [{"message": {"content": "I can fix this."}}]}
+    with patch("ai_writer.requests.post", return_value=response) as post:
+        generate_application_message(
+            {"title": "Fix a bug"}, "owner/repo", {"groq": "gsk-key"}, "groq", "Fallback",
+            {"groq": "llama-3.3-70b-versatile"},
+        )
+
+    payload = post.call_args.kwargs["json"]
+    assert payload["max_tokens"] == 140
+    assert "reasoning_effort" not in payload

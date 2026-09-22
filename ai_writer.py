@@ -128,15 +128,22 @@ def _generate(provider: str, api_key: str, model: str, prompt: str, timeout: int
         return "".join(_openai_text_parts(data.get("output") or []))
 
     if provider == "groq":
+        payload = {
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.35,
+            "max_tokens": 140,
+        }
+        if model.startswith("openai/gpt-oss"):
+            # GPT-OSS spends completion tokens on reasoning before answering, so a
+            # 140-token cap can leave the application empty or cut off mid-sentence.
+            payload.update(reasoning_effort="low", include_reasoning=False)
+            payload.pop("max_tokens")
+            payload["max_completion_tokens"] = 1024
         response = requests.post(
             "https://api.groq.com/openai/v1/chat/completions",
             headers={"authorization": f"Bearer {api_key}", "content-type": "application/json"},
-            json={
-                "model": model,
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.35,
-                "max_tokens": 140,
-            },
+            json=payload,
             timeout=timeout,
         )
         _raise_for_provider(response, "Groq")
