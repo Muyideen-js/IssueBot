@@ -61,11 +61,13 @@ def _statuses(db, user_id):
     return {r.issue_id: r.status for r in db.query(IssueRecord).filter_by(user_id=user_id)}
 
 
-def test_scan_drops_stale_queue_and_finished_assignments_then_restores_reopened_issues():
+def test_scan_deletes_stale_queue_and_finishes_assignments_then_requeues_reopened_issues():
     with SessionLocal() as db:
         user, settings = _setup_user(db, "history-user")
         db.add_all([
             IssueRecord(user_id=user.id, issue_id="old", title="Old", status="candidate"),
+            IssueRecord(user_id=user.id, issue_id="legacy", title="Legacy", status="closed"),
+            IssueRecord(user_id=user.id, issue_id="gone", title="Gone", status="inactive"),
             IssueRecord(user_id=user.id, issue_id="done", title="Done", status="accepted"),
             IssueRecord(user_id=user.id, issue_id="still", title="Still", status="accepted"),
         ])
@@ -74,7 +76,7 @@ def test_scan_drops_stale_queue_and_finished_assignments_then_restores_reopened_
         with patch.object(automation, "WaveClient", _fake_client(["new"], accepted=["still"])):
             automation.run_user_cycle(db, user, settings)
         assert _statuses(db, user.id) == {
-            "old": "closed", "done": "completed", "still": "accepted", "new": "candidate",
+            "gone": "inactive", "done": "completed", "still": "accepted", "new": "candidate",
         }
 
         with patch.object(automation, "WaveClient", _fake_client(["old", "new"], accepted=["still"])):

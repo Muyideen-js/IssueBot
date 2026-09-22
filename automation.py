@@ -221,6 +221,7 @@ def run_user_cycle(db, user: User, settings: BotSettings, deadline: float | None
                 continue
             record = by_issue.get(issue_id)
             if record and record.status == "closed":
+                # Left by an earlier release that hid stale rows instead of deleting them.
                 record.status = "candidate"
             if record and record.status != "candidate":
                 continue
@@ -239,12 +240,16 @@ def run_user_cycle(db, user: User, settings: BotSettings, deadline: float | None
                 by_issue[issue_id] = record
             available.append(issue)
 
-        # Only issues Drips currently lists as open and unassigned stay queued, so
-        # closed or taken issues from earlier Waves stop piling up in the queue.
+        # Only issues Drips currently lists as open and unassigned stay queued. Stale
+        # queue rows are deleted so earlier Waves do not pile up in the database; an
+        # issue that reopens is simply queued again as a new row.
         open_ids = {_issue_id(issue) for issue in issues}
-        for record in records:
-            if record.status == "candidate" and record.issue_id not in open_ids:
-                record.status = "closed"
+        stale = [
+            r for r in records if r.status in {"candidate", "closed"} and r.issue_id not in open_ids
+        ]
+        for record in stale:
+            db.delete(record)
+            by_issue.pop(record.issue_id, None)
 
         provider_keys = _provider_keys(settings)
         provider_models = _provider_models(settings)
