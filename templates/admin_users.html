@@ -14,29 +14,119 @@
 </section>
 
 <section class="panel">
-  <div class="panel-title"><h2>Users</h2><span class="muted small">Admin account is not shown here</span></div>
-  <table><thead><tr><th>User</th><th>Status</th><th>Monitoring</th><th>Drips</th><th>Queued</th><th>Pending</th><th>Accepted</th><th>Last scan</th><th style="text-align:right">Actions</th></tr></thead><tbody>
+  <div class="panel-title"><h2>Users</h2><span class="muted small">Select a user for stats and actions</span></div>
+  <table><thead><tr><th>User</th><th>Status</th><th>Monitoring</th><th>Drips</th><th style="text-align:right">Last scan</th></tr></thead><tbody>
   {% for user in users %}
     {% set stats = counts.get(user.id, {}) %}
-    <tr>
+    <tr class="row-link" tabindex="0" role="button" aria-haspopup="dialog" data-user-modal="user-modal-{{ user.id }}">
       <td class="user-name">{{ user.username }}</td>
       <td><span class="badge {{ 'status-good' if user.is_active else 'status-warn' }}">{{ 'Active' if user.is_active else 'Disabled' }}</span></td>
       <td><span class="badge {{ 'status-good' if user.settings and user.settings.enabled else '' }}">{{ 'Enabled' if user.settings and user.settings.enabled else 'Paused' }}</span></td>
       <td><span class="badge {{ 'status-good' if user.settings and user.settings.drips_session_encrypted else 'status-warn' }}">{{ 'Connected' if user.settings and user.settings.drips_session_encrypted else 'Not connected' }}</span></td>
-      <td>{{ stats.get('candidate', 0) }}</td>
-      <td>{{ stats.get('pending', 0) }}</td>
-      <td>{{ stats.get('accepted', 0) }}</td>
-      <td class="muted small">
-        {% if user.settings and user.settings.last_success_at %}{{ user.settings.last_success_at.strftime('%Y-%m-%d %H:%M') }} UTC{% else %}Never{% endif %}
-        {% if user.settings and user.settings.last_error %}<br><span class="status-warn">{{ user.settings.last_error[:80] }}</span>{% endif %}
-      </td>
-      <td><div class="inline table-actions">
-        <form method="post" action="{{ url_for('admin_toggle_user', user_id=user.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="secondary">{{ 'Disable' if user.is_active else 'Enable' }}</button></form>
-        <form class="reset-form" method="post" action="{{ url_for('admin_reset_password', user_id=user.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="password" name="temporary_password" placeholder="New temporary password" minlength="10" required><button class="secondary">Reset</button></form>
-        <form method="post" action="{{ url_for('admin_delete_user', user_id=user.id) }}" onsubmit="return confirm('Delete this user and all of their IssueBot data?')"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="danger">Delete</button></form>
-      </div></td>
+      <td class="muted small" style="text-align:right">{% if user.settings and user.settings.last_success_at %}{{ user.settings.last_success_at.strftime('%Y-%m-%d %H:%M') }} UTC{% else %}Never{% endif %}</td>
     </tr>
-  {% else %}<tr><td colspan="9"><div class="empty">No user accounts yet</div></td></tr>{% endfor %}
+  {% else %}<tr><td colspan="5"><div class="empty">No user accounts yet</div></td></tr>{% endfor %}
   </tbody></table>
 </section>
+
+{% for user in users %}
+  {% set stats = counts.get(user.id, {}) %}
+  {% set settings = user.settings %}
+  <div class="modal" id="user-modal-{{ user.id }}" role="dialog" aria-modal="true" aria-label="{{ user.username }} details" hidden>
+    <div class="modal-card">
+      <div class="modal-head">
+        <div><p class="eyebrow">User</p><h2 class="user-name" style="margin:0">{{ user.username }}</h2></div>
+        <button class="secondary modal-close" type="button" aria-label="Close">Close</button>
+      </div>
+      <div class="modal-body">
+        <div class="grid">
+          <div class="panel metric"><div class="stat">{{ stats.get('candidate', 0) }}</div><div class="muted small">Queued opportunities</div></div>
+          <div class="panel metric"><div class="stat">{{ stats.get('pending', 0) }}</div><div class="muted small">Pending applications</div></div>
+          <div class="panel metric"><div class="stat">{{ stats.get('accepted', 0) }}</div><div class="muted small">Accepted assignments</div></div>
+        </div>
+
+        <dl class="detail-list">
+          <div><dt>Account</dt><dd>{{ 'Active' if user.is_active else 'Disabled' }}{% if user.must_change_password %} · must change password{% endif %}</dd></div>
+          <div><dt>Monitoring</dt><dd>{{ 'Enabled' if settings and settings.enabled else 'Paused' }}</dd></div>
+          <div><dt>Drips session</dt><dd>{{ 'Connected' if settings and settings.drips_session_encrypted else 'Not connected' }}</dd></div>
+          <div><dt>Last scan</dt><dd>{% if settings and settings.last_run_at %}{{ settings.last_run_at.strftime('%Y-%m-%d %H:%M') }} UTC{% else %}Never{% endif %}</dd></div>
+          <div><dt>Last success</dt><dd>{% if settings and settings.last_success_at %}{{ settings.last_success_at.strftime('%Y-%m-%d %H:%M') }} UTC{% else %}Never{% endif %}</dd></div>
+          <div><dt>Scan interval</dt><dd>{{ settings.poll_minutes if settings else 5 }} minutes</dd></div>
+          <div><dt>Application limits</dt><dd>{{ settings.max_active_applications if settings else 15 }} active · {{ settings.max_per_repo if settings else 2 }} per repository</dd></div>
+          <div><dt>Rotate after</dt><dd>{{ settings.stale_minutes if settings else 30 }} minutes</dd></div>
+          <div><dt>AI provider</dt><dd>{{ settings.preferred_ai_provider if settings else 'gemini' }}</dd></div>
+          <div><dt>Retired issues</dt><dd>{{ stats.get('inactive', 0) }} inactive · {{ stats.get('expired', 0) }} rotated · {{ stats.get('completed', 0) }} completed</dd></div>
+        </dl>
+
+        {% if settings and settings.last_error %}
+          <p class="flash error" style="margin:0">{{ settings.last_error }}</p>
+        {% endif %}
+
+        <div class="modal-actions">
+          <form method="post" action="{{ url_for('admin_toggle_user', user_id=user.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="secondary">{{ 'Disable account' if user.is_active else 'Enable account' }}</button></form>
+          <form class="reset-form" method="post" action="{{ url_for('admin_reset_password', user_id=user.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="password" name="temporary_password" placeholder="New temporary password" minlength="10" required><button class="secondary">Reset password</button></form>
+          <form method="post" action="{{ url_for('admin_delete_user', user_id=user.id) }}" onsubmit="return confirm('Delete this user and all of their IssueBot data?')"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="danger">Delete user</button></form>
+        </div>
+      </div>
+    </div>
+  </div>
+{% endfor %}
+
+<script>
+(function () {
+  var openModal = null;
+  var lastTrigger = null;
+
+  function open(modal, trigger) {
+    if (openModal) close();
+    openModal = modal;
+    lastTrigger = trigger || null;
+    modal.hidden = false;
+    // Force a frame so the transition runs from the closed state.
+    requestAnimationFrame(function () { modal.classList.add("is-open"); });
+    document.body.classList.add("modal-open");
+    var closer = modal.querySelector(".modal-close");
+    if (closer) closer.focus();
+  }
+
+  function close() {
+    if (!openModal) return;
+    var modal = openModal;
+    openModal = null;
+    modal.classList.remove("is-open");
+    document.body.classList.remove("modal-open");
+    var finish = function () { modal.hidden = true; };
+    var card = modal.querySelector(".modal-card");
+    if (card && getComputedStyle(card).transitionDuration !== "0s") {
+      card.addEventListener("transitionend", finish, { once: true });
+    } else {
+      finish();
+    }
+    if (lastTrigger) lastTrigger.focus();
+    lastTrigger = null;
+  }
+
+  document.querySelectorAll("[data-user-modal]").forEach(function (row) {
+    var show = function (event) {
+      event.preventDefault();
+      var modal = document.getElementById(row.dataset.userModal);
+      if (modal) open(modal, row);
+    };
+    row.addEventListener("click", show);
+    row.addEventListener("keydown", function (event) {
+      if (event.key === "Enter" || event.key === " ") show(event);
+    });
+  });
+
+  document.querySelectorAll(".modal").forEach(function (modal) {
+    modal.addEventListener("click", function (event) {
+      if (event.target === modal || event.target.closest(".modal-close")) close();
+    });
+  });
+
+  document.addEventListener("keydown", function (event) {
+    if (event.key === "Escape") close();
+  });
+})();
+</script>
 {% endblock %}

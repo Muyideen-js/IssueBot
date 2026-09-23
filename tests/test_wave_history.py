@@ -145,12 +145,15 @@ def test_admin_user_table_shows_each_accounts_issue_counts():
 
     page = client.get("/admin").data.decode()
 
-    def counts_in(username):
-        row = next(row for row in page.split("<tr>") if username in row)
-        return re.findall(r"<td>(\d+)</td>", row), row
+    def modal_for(username):
+        modal = next(
+            part for part in page.split('<div class="modal"')
+            if f'aria-label="{username} details"' in part
+        )
+        return re.findall(r'<div class="stat">(\d+)</div>', modal), modal
 
-    stats_counts, stats_row = counts_in("stats-user")
-    quiet_counts, _ = counts_in("quiet-user")
+    stats_counts, stats_modal = modal_for("stats-user")
+    quiet_counts, _ = modal_for("quiet-user")
     assert stats_counts == ["2", "1", "1"]  # queued, pending, accepted
     assert quiet_counts == ["1", "0", "0"]
-    assert "Not connected" in stats_row
+    assert "Not connected" in stats_modal
