@@ -61,6 +61,7 @@ details { border-top:1px solid var(--line); padding-top:12px; } summary { color:
 @media(max-width:520px) { .container { width:min(100% - 20px,1040px); margin-top:18px; }.topbar-inner { width:calc(100% - 20px); }.brand-context,.nav-user { display:none; }.navlinks>a { padding:7px; }.panel { padding:14px; }.auth-shell { width:calc(100% - 20px); }.auth-panel { padding:24px; }.reset-form { align-items:stretch; flex-direction:column; }.reset-form input { width:100%; } }
 .row-link { cursor:pointer; transition:background .14s ease; }.row-link:hover,.row-link:focus-visible { background:#f8fafc; outline:0; }.row-link:focus-visible td:first-child { box-shadow:inset 2px 0 0 var(--blue); }
 body.modal-open { overflow:hidden; }
+.modal[hidden] { display:none; }
 .modal { position:fixed; inset:0; z-index:40; display:flex; align-items:center; justify-content:center; padding:20px; background:rgba(16,24,40,.45); opacity:0; transition:opacity .18s ease; }
 .modal.is-open { opacity:1; }
 .modal-card { width:min(620px,100%); max-height:88vh; overflow-y:auto; background:var(--surface); border:1px solid var(--line-strong); box-shadow:0 18px 44px rgba(16,24,40,.18); transform:translateY(10px) scale(.985); opacity:0; transition:transform .2s cubic-bezier(.2,.7,.3,1), opacity .2s ease; }
