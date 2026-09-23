@@ -21,7 +21,7 @@ from flask import (
     url_for,
 )
 from qstash import Receiver
-from sqlalchemy import delete, desc, select
+from sqlalchemy import delete, desc, func, select
 
 from ai_writer import DEFAULT_MODELS, PROVIDERS, SUGGESTED_MODELS, test_provider
 from automation import BLOCKED_REPOSITORIES
@@ -487,7 +487,13 @@ def create_app(test_config: dict | None = None) -> Flask:
                 return redirect(url_for("admin_dashboard"))
 
         users = g.db.scalars(select(User).where(User.is_admin.is_(False)).order_by(User.username)).all()
-        return render_template("admin_users.html", users=users)
+        counts = defaultdict(dict)
+        for user_id, status, total in g.db.execute(
+            select(IssueRecord.user_id, IssueRecord.status, func.count())
+            .group_by(IssueRecord.user_id, IssueRecord.status)
+        ):
+            counts[user_id][status] = total
+        return render_template("admin_users.html", users=users, counts=counts)
 
     @app.get("/admin/users")
     @admin_required

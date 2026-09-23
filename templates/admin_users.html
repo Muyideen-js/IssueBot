@@ -15,19 +15,28 @@
 
 <section class="panel">
   <div class="panel-title"><h2>Users</h2><span class="muted small">Admin account is not shown here</span></div>
-  <table><thead><tr><th>User</th><th>Status</th><th>Monitoring</th><th style="text-align:right">Actions</th></tr></thead><tbody>
+  <table><thead><tr><th>User</th><th>Status</th><th>Monitoring</th><th>Drips</th><th>Queued</th><th>Pending</th><th>Accepted</th><th>Last scan</th><th style="text-align:right">Actions</th></tr></thead><tbody>
   {% for user in users %}
+    {% set stats = counts.get(user.id, {}) %}
     <tr>
       <td class="user-name">{{ user.username }}</td>
       <td><span class="badge {{ 'status-good' if user.is_active else 'status-warn' }}">{{ 'Active' if user.is_active else 'Disabled' }}</span></td>
       <td><span class="badge {{ 'status-good' if user.settings and user.settings.enabled else '' }}">{{ 'Enabled' if user.settings and user.settings.enabled else 'Paused' }}</span></td>
+      <td><span class="badge {{ 'status-good' if user.settings and user.settings.drips_session_encrypted else 'status-warn' }}">{{ 'Connected' if user.settings and user.settings.drips_session_encrypted else 'Not connected' }}</span></td>
+      <td>{{ stats.get('candidate', 0) }}</td>
+      <td>{{ stats.get('pending', 0) }}</td>
+      <td>{{ stats.get('accepted', 0) }}</td>
+      <td class="muted small">
+        {% if user.settings and user.settings.last_success_at %}{{ user.settings.last_success_at.strftime('%Y-%m-%d %H:%M') }} UTC{% else %}Never{% endif %}
+        {% if user.settings and user.settings.last_error %}<br><span class="status-warn">{{ user.settings.last_error[:80] }}</span>{% endif %}
+      </td>
       <td><div class="inline table-actions">
         <form method="post" action="{{ url_for('admin_toggle_user', user_id=user.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="secondary">{{ 'Disable' if user.is_active else 'Enable' }}</button></form>
         <form class="reset-form" method="post" action="{{ url_for('admin_reset_password', user_id=user.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="password" name="temporary_password" placeholder="New temporary password" minlength="10" required><button class="secondary">Reset</button></form>
         <form method="post" action="{{ url_for('admin_delete_user', user_id=user.id) }}" onsubmit="return confirm('Delete this user and all of their IssueBot data?')"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="danger">Delete</button></form>
       </div></td>
     </tr>
-  {% else %}<tr><td colspan="4"><div class="empty">No user accounts yet</div></td></tr>{% endfor %}
+  {% else %}<tr><td colspan="9"><div class="empty">No user accounts yet</div></td></tr>{% endfor %}
   </tbody></table>
 </section>
 {% endblock %}

@@ -1,9 +1,13 @@
+import os
 import re
 from unittest.mock import patch
 
 import pytest
 
-import automation
+os.environ.setdefault("ADMIN_USERNAME", "admin")
+os.environ.setdefault("ADMIN_PASSWORD", "admin-password-123")
+
+import automation  # noqa: E402
 import dashboard
 from database import Base, SessionLocal, engine
 from models import BotSettings, IssueRecord, User
@@ -111,3 +115,42 @@ def test_clear_history_removes_only_the_current_users_records():
     with SessionLocal() as db:
         assert db.query(IssueRecord).filter_by(user_id=user_id).count() == 0
         assert db.query(IssueRecord).filter_by(user_id=other_id).count() == 1
+
+
+def test_admin_user_table_shows_each_accounts_issue_counts():
+    with SessionLocal() as db:
+        user, settings = _setup_user(db, "stats-user")
+        settings.drips_session_encrypted = ""
+        quiet = User(username="quiet-user", must_change_password=False)
+        quiet.set_password("quiet-user-password-123")
+        db.add(quiet)
+        db.flush()
+        db.add(BotSettings(user_id=quiet.id))
+        db.add_all([
+            IssueRecord(user_id=user.id, issue_id="c1", title="C1", status="candidate"),
+            IssueRecord(user_id=user.id, issue_id="c2", title="C2", status="candidate"),
+            IssueRecord(user_id=user.id, issue_id="p1", title="P1", status="pending"),
+            IssueRecord(user_id=user.id, issue_id="a1", title="A1", status="accepted"),
+            IssueRecord(user_id=quiet.id, issue_id="c1", title="C1", status="candidate"),
+        ])
+        db.commit()
+
+    app = dashboard.create_app({"TESTING": True, "SECRET_KEY": "test-session-secret"})
+    dashboard.bootstrap_admin()
+    client = app.test_client()
+    token = re.search(rb'name="csrf_token" value="([^"]+)"', client.get("/admin/login").data).group(1).decode()
+    client.post("/admin/login", data={
+        "csrf_token": token, "username": "admin", "password": "admin-password-123",
+    })
+
+    page = client.get("/admin").data.decode()
+
+    def counts_in(username):
+        row = next(row for row in page.split("<tr>") if username in row)
+        return re.findall(r"<td>(\d+)</td>", row), row
+
+    stats_counts, stats_row = counts_in("stats-user")
+    quiet_counts, _ = counts_in("quiet-user")
+    assert stats_counts == ["2", "1", "1"]  # queued, pending, accepted
+    assert quiet_counts == ["1", "0", "0"]
+    assert "Not connected" in stats_row
